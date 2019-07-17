@@ -5,6 +5,12 @@ from Bio import SeqIO
 from Bio import AlignIO
 
 
+# 4. Goes through every amino acid in the OR REF alignment
+#    If the amino acid matches the start of the tm region,
+#    Then it records every amino acid in window excluding gaps
+#    until window is the same length as the TM region
+#    Then it checks if the regions are the same, and if they
+#    are the start and stop coordinates are returned.
 def find_tm(tm_seq, ref_ma):
     for i, x in enumerate(ref_ma):
         if x == tm_seq[0]:
@@ -20,7 +26,10 @@ def find_tm(tm_seq, ref_ma):
             if window == tm_seq:
                 return start, stop
 
-
+# 3. First gets the sequence of each TM from the original OR REF sequence,
+#    Then sends that sequence and the OR REF alignment sequence to find_tm
+# 5. The resulting start and stop positions are added with the OR REF name
+#    to ref_tms_aln, which is returned. 
 def find_tms(ref_seq, ref_tms, ref_seq_msa):
     ref_tms_aln = []
     for tm in ref_tms:
@@ -44,6 +53,11 @@ def assign_tm1_left(genes, record_id, tm1_left_aa):
             return gene
 
 
+# 2. Converts orf_aln ro an alignment object, or_ref to a Seqrecord, 
+#    or_ref_tm to an array (Ref OR ID, TM start, TM end)  and genome to a SeqIO dict
+#    list of TM regions is sent to find_tms. Which returns an array containing
+#    The starts and stops of TMs in the alignment 
+
 def assign_start_codon(in_genome, in_ORFs_aln, in_or_ref, in_or_ref_tm):
     alignment = AlignIO.read(in_ORFs_aln, "fasta")
     or_ref = SeqIO.read(in_or_ref, "fasta")
@@ -59,16 +73,18 @@ def assign_start_codon(in_genome, in_ORFs_aln, in_or_ref, in_or_ref_tm):
             or_ref_msa = record
             break
     or_ref_tms_aln = find_tms(or_ref.seq, or_ref_tms, or_ref_msa.seq)
+# 6. TM1 is selected, and the regions upstream and downstream of the first codon
+#    in alignment are identified.
+#    For each record that isn't the OR REF, all - are removed
     TM1 = or_ref_tms_aln[0]
     genome = SeqIO.to_dict(SeqIO.parse(in_genome, "fasta"))
     upstream = alignment[:, :TM1[1] - 1]
     downstream = alignment[:, TM1[1] - 1:]
-    for i in xrange(0, len(upstream)):
+    for i in range(0, len(upstream)):
         record = upstream[i]
         record_down = downstream[i]
         if record.id == or_ref.id:
             continue
-
         # get ORF information
         up_seq = str(record.seq).replace("-", "")
         up_seq_len = len(up_seq)
@@ -161,7 +177,8 @@ def assign_start_codon(in_genome, in_ORFs_aln, in_or_ref, in_or_ref_tm):
         if abs(end - start)/3 >= 250 and abs(end-start)/3 <= 450:
             print("\t".join(line))
 
-
+# 1. Takes in arguments genome, orf_aln, or_ref, or_ref_tm and 
+#    hands them to assign_start_codon
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="Assignment of a proper initiation codon")
