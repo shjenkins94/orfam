@@ -191,7 +191,8 @@ options:
 		echo "Error: $MAKEBLASTDB returned an error;exit now"
 		exit 1
 	fi
-
+	
+	# perform alignment (only uses query sequences with lengths of 250 or more)
 	echo "Aligning..."
     if [[ $VERBOSE -eq 1 ]]; then
    		echo "
@@ -370,6 +371,7 @@ options:
 		echo "Error: output file are required.\n"
 		exit 1
 	fi
+	
 	OUTBASE=$( basename "$OUTPUT" )
 	OUT_BEST_HIT="${OUTBASE}_best_hit.gff"
 	OUT_INTACT="${OUTBASE}_intact.fa"
@@ -406,10 +408,16 @@ options:
 			"
 	fi
 
+	# Formats alignment as a GFF file
+	# Sorts by strand, subject id and subject start position 
+	# Then uses bedtools to create clusters of hits with overlapping bases
 	cat $ALIGNMENT | awk -v OFS='\t' '{ if(($9<$10)) { strand="+" } else { strand="-"; tmp=$10; $10=$9; $9=tmp } print $2,"TBLASTN","similarity",$9,$10,$11,strand,".","qseqid="$1";qstart="$7";qend="$8";pident="$3";length="$4";mismatch="$5";gapopen="$6";bitscore="$12 }' \
 	| sort -k7,7 -k1,1 -k4n,4 \
 	| $BEDTOOLS cluster -s -i /dev/stdin > $TEMP_DIR/blast_hit_clusters.gff
-		
+	
+	# Adds another column with the bit score for each hit
+	# Sorts by cluster, then e-score, then bit score
+	# Takes the top hit for each cluster, discards hits with lengths of less than 50
 	paste $TEMP_DIR/blast_hit_clusters.gff <(cat $TEMP_DIR/blast_hit_clusters.gff | cut -f 9 | cut -f 8 -d ';' | cut -f 2 -d '=') \
 	| sort -k10n,10 -k6g,6 -k11gr,11 \
 	| awk '!arr[$10]++' | cut -f 1-9 | awk '($5-$4+1)/3>=50' > $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp
@@ -442,7 +450,13 @@ options:
 		| $BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout \
 		| $PYTHON $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa"
 	fi
-		
+	
+	# Uses included python script findorf.py to get potential orfs from all 6 
+	# reading frames for each blast hit coordinates
+	# Get sequences for those orfs and calls fastatools translate function to 
+	# create a protein fasta file of all the orfs
+	# DOES THIS CHECK TO MAKE SURE THE ORF MATCHES THE HIT?
+	# SO, THIS DOESN'T CHECK IF ORF MATCHES HIT. WORST CASE SCENARIO, EACH HIT RESULTS IN 6 ORFS INSTEAD OF 1
 	$PYTHON $FINDORF $REFERENCE $TEMP_DIR/blast_hits_250_aa.gff \
 	| $BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout \
 	| $PYTHON $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa
@@ -456,11 +470,24 @@ options:
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "Criteria 3: multiple alignment and exclude or candidates which have long gaps (>=5) within transmembrane regions."
 	fi
-
-	i=0
+	
+	# this divides the open reading frame file into fastas of 400 or less
 	awk -v i=0 -v d=0 "/^>/ && i++%400==0{s=\"$TEMP_DIR/open_reading_frame_\"++d\".fa\"} {print > s}" ${TEMP_DIR}/open_reading_frame.fa
+	
+	# Cycles through all of the reading frame fasta files
+	i=0
 	for FASTA in $TEMP_DIR/open_reading_frame_*.fa; do
 		i=$((i+1))
+		
+		# puts the commands to be run in a text file
+		# Adds the reference OR to the open reading frames
+		# Aligns the sequences with MAFFT
+		# Sends alignment along with OR REF and OR REF TM bed file to tm_gap
+		# Gets back a GFF file with the start and stop of sequences with intact
+		# TM regions. 
+		# Sends that to Bedtools to get a fasta from the subject sequence, then 
+		# translates the fastas, adds the OR REF, aligns with mafft, and sends
+		# to a sequence alighnment fasta.
 		echo "
 		cat $FASTA $OR_REF \
 		| $MAFFT --maxiterate 1000 --genafpair --thread $THREADS /dev/stdin \
@@ -472,13 +499,13 @@ options:
 		"
 		done > $TEMP_DIR/command.txt
 		
-		if [[ $VERBOSE -eq 1 ]]; then
-			echo "
-			cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS"
-		fi
+	if [[ $VERBOSE -eq 1 ]]; then
+		echo "
+		cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS"
+	fi
 
-		cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS
-		rm $TEMP_DIR/open_reading_frame_*.fa
+	cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS
+	rm $TEMP_DIR/open_reading_frame_*.fa
 	
 	
 	if [[ "$?" -ne 0 ]]; then
@@ -486,14 +513,17 @@ options:
 		exit 1
 	fi
 	
-	# creteria 4
+	# criteria 4
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "Criteria 4: assigning a proper initiation codon"
 	fi
-
+	
+	# Cycles through all the fasta files with intact TM regions
 	i=0
 	for FASTA in ${TEMP_DIR}/excluded_long_gap_*_aln.fa; do
 		i=$((i+1))
+		
+		#Sends REFERENCE, OR_REF, OR_TM and FASTA to start codon
 		echo -e "
 		$PYTHON $START_CODON --genome $REFERENCE --or_ref $OR_REF --or_ref_tm $OR_TM --orf_aln $FASTA \
 		| $BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout \
