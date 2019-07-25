@@ -30,6 +30,12 @@ def _exclude(args):
         if record.id not in complement_ids:
             print(record.format('fasta'))
 
+
+def _id_list(args):
+    for record in SeqIO.parse(args.fasta, 'fasta'):
+        print(record.id)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="FASTA sequence manipulation tools")
@@ -57,6 +63,12 @@ if __name__ == '__main__':
     parser_exclude.add_argument(
         'ids', type=argparse.FileType('r'), help=("one id in each line"))
     parser_exclude.set_defaults(func=_exclude)
+
+    parser_id_list = subparser.add_parser(
+        'id_list', help=("list sequence ids"))
+    parser_id_list.add_argument(
+        'fasta', type=argparse.FileType('r'), help=("FASTA file"))
+    parser_id_list.set_defaults(func=_id_list)
 
     # Parse arguments and run the sub-command
     args = parser.parse_args()
