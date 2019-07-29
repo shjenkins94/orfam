@@ -25,6 +25,7 @@ options: -h 	show this message
 }
 
 
+<<<<<<< Updated upstream
 function source_binaries() {
 	if [[ ! -e $1 ]]; then
 		echo "Cannot find BIN. Make sure that it is a valid file: $BIN"
@@ -48,6 +49,19 @@ function source_binaries() {
 			exit 1
 		fi
 	done
+=======
+function check_python_modules(){
+	PYTHON_TEST=$1
+	echo "Checking for required python modules ($PYTHON_TEST)..."
+
+	BIOPYTHON=$($PYTHON_TEST -c "import imp; imp.find_module('Bio')" 2>&1 || true)
+
+	if [[ ! -z "$BIOPYTHON" ]]; then
+	 	usage
+	 	echo "Error: biopython is not installed for $PYTHON_TEST"
+	 	exit 1
+	fi
+>>>>>>> Stashed changes
 }
 
 
@@ -58,6 +72,7 @@ function align() {
 usage:	orfam align [options]
 NEW:
 options:
+<<<<<<< Updated upstream
 -Q FILE	known olfactory receptor proteins (FASTA)
 -S FILE	subject genome (FASTA)
 -O STR	output file [tabular]
@@ -67,6 +82,18 @@ options:
 -k	keep temporary directory
 -v	verbose
 -h	show this message
+=======
+  -q FILE 	olfactory receptor proteins (FASTA)
+  -s FILE 	subject genome (FASTA)
+  -o STR 	  output file [.align]
+  -e FLOAT	evalue for hits
+  -t INT 	  threads [1]
+  -T DIR 	  temp directory [./tmpXXXXXXXX]
+	-B FILE   path to orfam bin file (default: same directory as orfam)
+  -K FILE 	path to orfam.config file (default: same directory as orfam)
+  -v 		verbose
+  -h 		show this message
+>>>>>>> Stashed changes
 
 Required executables:
 bioawk
@@ -88,7 +115,11 @@ TBLASTN
 	KEEP=false
 	VERBOSE=false
 
+<<<<<<< Updated upstream
 	while getopts ":Q:S:O:T:t:E:kvh" OPTION; do
+=======
+	while getopts ":q:s:o:e:t:T:khv" OPTION; do
+>>>>>>> Stashed changes
 		case "$OPTION" in
 		Q)
 			QUERY="$OPTARG"
@@ -110,7 +141,11 @@ TBLASTN
 			EVALUE="$OPTARG"
 			;;
 		v)
+<<<<<<< Updated upstream
 			VERBOSE=true
+=======
+			VERBOSE=1
+>>>>>>> Stashed changes
 			;;
 		k)
 			KEEP=true
@@ -128,20 +163,34 @@ TBLASTN
 
 	# check the relevant binaries
 	#source_binaries $CONFIG
+<<<<<<< Updated upstream
 	for DEPBIN in "bioawk" "makeblastdb" "tblastn"
 	do
 		hash $DEPBIN 2>/dev/null || { echo >&2 "$DEPBIN not found. Please check that it is installed"; align_usage; exit 1;}
+=======
+	for depbin in "bioawk" "makeblastdb" "tblastn"
+	do
+		hash $depbin 2>/dev/null || { echo >&2 "$depbin not found. Please check that it is installed"; align_usage; exit 1;}
+>>>>>>> Stashed changes
 	done
 
 	# check that the required files exist
 	if [[ ! -f $SUBJECT ]]; then
 		align_usage
+<<<<<<< Updated upstream
 		echo -e "Error: subject genome fasta file SUBJECT not found.\n"
+=======
+		echo -e "Error: SUBJECT file $SUBJECT not found.\n"
+>>>>>>> Stashed changes
 		exit 1
 	fi
 	if [[ ! -f $QUERY ]]; then
 		align_usage
+<<<<<<< Updated upstream
 		echo -e "Error: olfactory receptor fasta file QUERY not found.\n"
+=======
+		echo -e "Error: olfactory receptor file $QUERY not found.\n"
+>>>>>>> Stashed changes
 		exit 1
 	fi
 
@@ -157,9 +206,20 @@ TBLASTN
 		mkdir -p $TEMP_DIR
 	fi
 
+<<<<<<< Updated upstream
 
 	echo "Aligning..."
   if $VERBOSE ; then
+=======
+	if [[ "$?" -ne 0 ]]; then
+		echo "Error: $MAKEBLASTDB returned an error;exit now"
+		exit 1
+	fi
+
+	# perform alignment (only uses query sequences with lengths of 250 or more)
+	echo "Aligning..."
+  if [[ $VERBOSE -eq 1 ]]; then
+>>>>>>> Stashed changes
    	echo "
 bioawk -c fastx 'length(\$2) >= 250 { print \">\"\$1\"\n\"\$2}' $QUERY > $TEMP_DIR/query_length_ge_250aa.fa
 makeblastdb -dbtype nucl -in $SUBJECT -out $TEMP_DIR/$(basename $SUBJECT) -title \"ref genome database\" -parse_seqids
@@ -167,6 +227,7 @@ tblastn -db $TEMP_DIR/$(basename $SUBJECT) -query $TEMP_DIR/query_length_ge_250a
 mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT"
   fi
 
+<<<<<<< Updated upstream
 	#Filters out query sequences with lengths of less than 250
 	#Creates a blast database for SUBJECT
 	#Runs a tblastn search of the SUBJECT database
@@ -177,6 +238,17 @@ mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT"
   tblastn -db $TEMP_DIR/"$(basename $SUBJECT)" -query $TEMP_DIR/query_length_ge_250aa.fa -out $TEMP_DIR/${OUTBASE}.tmp -evalue $EVALUE -outfmt 6 -num_threads $THREADS
 	if [[ "$?" -ne 0 ]]; then echo "Error: tblastn returned an error;exit now"; exit 1; fi
 	mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT
+=======
+	bioawk -c fastx 'length($2) >= 250 { print ">"$1"\n"$2}' $QUERY > $TEMP_DIR/query_length_ge_250aa.fa
+  makeblastdb -dbtype nucl -in $SUBJECT -out $TEMP_DIR/"$(basename $SUBJECT)" -title "ref genome database" -parse_seqids
+  tblastn -db $TEMP_DIR/"$(basename $SUBJECT)" -query $TEMP_DIR/query_length_ge_250aa.fa -out $TEMP_DIR/${OUTBASE}.tmp -evalue $EVALUE -outfmt 6 -num_threads $THREADS
+	mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT
+
+	if [[ "$?" -ne 0 ]]; then
+		echo "Error: $TBLASTN returned an error;exit now"
+		exit 1
+	fi
+>>>>>>> Stashed changes
 
 	# clean up
 	if ! $KEEP ; then
@@ -193,6 +265,7 @@ mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT"
 function func() {
 	function func_usage() {
 		echo "
+<<<<<<< Updated upstream
 usage:	orfam func [options]
 options:
 	-R FILE reference file (fasta) (required)
@@ -217,6 +290,30 @@ megacc
 
 Required Python modules:
 biopython
+=======
+	usage:	orfam func [options]
+	options:
+		-R FILE reference file (fasta) (required)
+		-r FILE reference olfactory receptor (fasta) (required)
+		-B FILE BED file represents the regions of reference olfactory receptor (required)
+		-A FILE tblastn output (tabular) (required)
+		-O FILE olfactory receptor for outgroup (fasta) (required)
+		-S FILE MAO file, setting used to the construction of phylogenetic tree (generated by megaproto) (required)
+		-o STR 	output prefix [required]
+		-t INT  threads [1]
+		-T DIR 	temp directory [./tmpXXXXXXXX]
+		-k 		keep temporary files
+		-K FILE path to orfam.config file (default: same directory as orfam)
+		-v 		verbose
+		-h 		show this message
+
+	Required executables:
+	bioawk
+	bedtools
+	mafft
+	megacc
+
+>>>>>>> Stashed changes
 	"
 	}
 
@@ -291,16 +388,26 @@ biopython
 	done
 
 	# check the relevant binaries
+<<<<<<< Updated upstream
 	source_binaries $BIN
 
 	python -c "import Bio" 2>/dev/null ||\
 	{ echo "Bio module not found. Please check that it is installed"; func_usage; exit 1;}
+=======
+	source_binaries $CONFIG
+    # check python modules
+  check_python_modules $PYTHON
+>>>>>>> Stashed changes
 
 	for depbin in "bioawk" "bedtools" "mafft"
 	do
 		hash $depbin 2>/dev/null || { echo >&2 "$depbin not found. Please check that it is installed"; func_usage; exit 1;}
 	done
 
+<<<<<<< Updated upstream
+=======
+	python -c "import fastatools" 2>/dev/null || { echo >&2 "fastatools python package not found. Please check that it is installed"; align_usage; }
+>>>>>>> Stashed changes
 
 
 	# if [[ ! -f $MEGACC ]]; then
@@ -308,8 +415,36 @@ biopython
 	# 	echo -e "Error: megacc executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
 	# 	exit 1
 	# fi
+<<<<<<< Updated upstream
 
 
+=======
+	if [[ ! -f $FINDORF ]]; then
+		func_usage
+		echo -e "Error: findorf.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
+		exit 1
+	fi
+	if [[ ! -f $TM_GAP ]]; then
+		func_usage
+		echo -e "Error: tm_long_gap.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
+		exit 1
+	fi
+	if [[ ! -f $START_CODON ]]; then
+		func_usage
+		echo -e "Error: start_codon.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
+		exit 1
+	fi
+	if [[ ! -f $PHYLO ]]; then
+		func_usage
+		echo -e "Error: phylo.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
+		exit 1
+	fi
+	if [[ ! -f $ROOT_WITH_OUTGROUP ]]; then
+		func_usage
+		echo -e "Error: root_with_outgroup.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
+		exit 1
+	fi
+>>>>>>> Stashed changes
 
 	if [[ -z $OUTPUT ]]; then
 		func_usage
