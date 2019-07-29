@@ -67,9 +67,9 @@ def orffinder(seq, min_protein_length, strand):
 #    BED file
 def findorf(args):
     min_protein_length = args.min_p_len
-    with open(args.subject) as in_subject:
+    with open(args.subject, "rU") as in_subject:
         subj_dict = SeqIO.to_dict(SeqIO.parse(in_subject, "fasta"))
-    with open(args.hit) as in_hit:
+    with open(args.hit, "rU") as in_hit:
         for line in in_hit:
             hit = line.rstrip().split()
             chrom = hit[0]
