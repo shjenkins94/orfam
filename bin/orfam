@@ -20,74 +20,57 @@ usage:   orfam <command> [options]
 command: align 	align FASTA files with tblastn
          func 	identify intact olfactory receptor genes
          pseudo identify pseudo olfactory receptor genes
-options: -h 	show this message 
+options: -h 	show this message
 "
 }
 
-# source the paths to the binaries used in the script
+
 function source_binaries() {
-	BIN=$(cd $(dirname $0);pwd)
-	FASTATOOLS=$BIN/fastatools.py
-        FINDORF=$BIN/findorf.py
-        TM_GAP=$BIN/tm_gap.py
-        START_CODON=$BIN/start_codon.py
-        PHYLO=$BIN/phylo_tree.py
-        ROOT_WITH_OUTGROUP=$BIN/root_with_outgroup.py
-        PSEUDOGENE=$BIN/pseudogene.py
-
-	if [[ -e $1 ]]; then
-		echo "Sourcing executables from $1 ..."
-		source $1
-	else
-		echo "Config file $1 not found. Attempting to auto-source executables"
-		# general
-		ORFAM_HOME=$( dirname $(which orfam ) )
-		PYTHON=$( which python2.7 || true )
-		PARALLEL=$( which parallel || true )
-		
-		BIOAWK=$( which bioawk || true )
-		BEDTOOLS=$( which bedtools || true )
-
-		# alignment
-		MAKEBLASTDB=$( which makeblastdb || true )
-		TBLASTN=$( which tblastn || true )
-		EXONERATE=$( which exonerate || true)
-		MAFFT=$( which mafft || true )
-
-		# phylo tree
-		MEGACC=$( which megacc || true)
+	if [[ ! -e $1 ]]; then
+		echo "Cannot find BIN. Make sure that it is a valid file: $BIN"
+		func_usage
+		exit 1
 	fi
+
+	FASTATOOLS=$BIN/fastatools.py
+  FINDORF=$BIN/findorf.py
+	TM_GAP=$BIN/tm_gap.py
+  START_CODON=$BIN/start_codon.py
+  PHYLO=$BIN/phylo_tree.py
+  ROOT_WITH_OUTGROUP=$BIN/root_with_outgroup.py
+  PSEUDOGENE=$BIN/pseudogene.py
+
+	for PYPACK in $FASTATOOLS $FINDORF $TM_GAP $START_CODON $PHYLO $ROOT_WITH_OUTGROUP $PSEUDOGENE $FOO
+	do
+		if [[ ! -f $PYPACK ]]; then
+			echo -e "Error: $PYPACK executable not found. Please make sure it is in $BIN"
+			func_usage
+			exit 1
+		fi
+	done
 }
 
-function check_python_modules(){
-	PYTHON_TEST=$1
-	echo "Checking for required python modules ($PYTHON_TEST)..."
-
-	BIOPYTHON=$($PYTHON_TEST -c "import imp; imp.find_module('Bio')" 2>&1 || true)
-
-	if [[ ! -z "$BIOPYTHON" ]]; then
-	 	usage
-	 	echo "Error: biopython is not installed for $PYTHON_TEST"
-	 	exit 1
-	fi 
-}
 
 # alignment with tblastn
 function align() {
 	function align_usage() {
 		echo "
 usage:	orfam align [options]
-
+NEW:
 options:
-  -q FILE 	olfactory receptor proteins (FASTA)
-  -s FILE 	subject genome (FASTA)
-  -o STR 	output file [.align]
-  -e FLOAT	evalue for hits
-  -t INT 	threads [1]
-  -T DIR 	temp directory [./tmpXXXXXXXX]
-  -K FILE 	path to orfam.config file (default: same directory as orfam)
-  -v 		verbose
-  -h 		show this message
+-Q FILE	known olfactory receptor proteins (FASTA)
+-S FILE	subject genome (FASTA)
+-O STR	output file [tabular]
+-T DIR	temp directory [/tmpXXX]
+-t INT	threads [1]
+-E FLOAT	evalue for hits [1e-10]
+-k	keep temporary directory
+-v	verbose
+-h	show this message
+
+Required executables:
+bioawk
+TBLASTN
 "
 	}
 
@@ -98,46 +81,43 @@ options:
 	fi
 
 	# set defaults
-	ORFAM_DIR=$(dirname $0)
-	CONFIG="$ORFAM_DIR/orfam.config"
-	#CONFIG=""
 	OUTPUT=""
+	EVALUE=1e-10
 	THREADS=1
 	TEMP_DIR=""
-	VERBOSE=0
+	KEEP=false
+	VERBOSE=false
 
-	while getopts ":q:s:o:e:t:T:kK:hv" OPTION; do
+	while getopts ":Q:S:O:T:t:E:kvh" OPTION; do
 		case "$OPTION" in
-		h)
-			align_usage
-			exit 1
-			;;
-		q)
+		Q)
 			QUERY="$OPTARG"
 			;;
-		s)
+		S)
 			SUBJECT="$OPTARG"
 			;;
-		o)
+		O)
 			OUTPUT="$OPTARG"
 			;;
-		e)
-			EVALUE="$OPTARG"
+
+		T)
+			TEMP_DIR="$OPTARG"
 			;;
 		t)
 			THREADS="$OPTARG"
 			;;
-		T)
-			TEMP_DIR="$OPTARG"
+		E)
+			EVALUE="$OPTARG"
 			;;
 		v)
-			VERBOSE=1
-			;;
-		K)
-			CONFIG="$OPTARG"
+			VERBOSE=true
 			;;
 		k)
-			KEEP=1
+			KEEP=true
+			;;
+		h)
+			align_usage
+			exit 1
 			;;
 		?)
 			align_usage
@@ -147,87 +127,73 @@ options:
 	done
 
 	# check the relevant binaries
-	source_binaries $CONFIG
-	
-    if [[ ! -f $BIOAWK ]]; then
-        align_usage
-        echo -e "Error: bioawk executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-        exit 1
-    fi
-	if [[ ! -f $MAKEBLASTDB ]]; then
-		align_usage
-		echo -e "Error: makeblastdb executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $TBLASTN ]]; then
-		align_usage
-		echo -e "Error: tblastn executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
+	#source_binaries $CONFIG
+	for DEPBIN in "bioawk" "makeblastdb" "tblastn"
+	do
+		hash $DEPBIN 2>/dev/null || { echo >&2 "$DEPBIN not found. Please check that it is installed"; align_usage; exit 1;}
+	done
 
 	# check that the required files exist
 	if [[ ! -f $SUBJECT ]]; then
 		align_usage
-		echo -e "Error: SUBJECT file $SUBJECT not found.\n"	
+		echo -e "Error: subject genome fasta file SUBJECT not found.\n"
 		exit 1
 	fi
 	if [[ ! -f $QUERY ]]; then
 		align_usage
-		echo -e "Error: olfactory receptor file $QUERY not found.\n"	
+		echo -e "Error: olfactory receptor fasta file QUERY not found.\n"
 		exit 1
 	fi
+
 	if [[ -z $OUTPUT ]]; then
-		OUTPUT="$(basename $QUERY).tblastn"
+		OUTPUT="$(basename $QUERY)_debug.tblastn"
 	fi
     OUTBASE=$(basename $OUTPUT)
+
 	# make temporary directory
 	if [[ -z $TEMP_DIR ]]; then
-		TEMP_DIR=$( mktemp -d tmpXXXXXXXX )
+		TEMP_DIR=$( mktemp -d tmpXXX )
 	else
 		mkdir -p $TEMP_DIR
 	fi
-	
-	if [[ "$?" -ne 0 ]]; then
-		echo "Error: $MAKEBLASTDB returned an error;exit now"
-		exit 1
-	fi
-	
-	# perform alignment (only uses query sequences with lengths of 250 or more)
-	echo "Aligning..."
-    if [[ $VERBOSE -eq 1 ]]; then
-   		echo "
-		$BIOAWK -c fastx 'length(\$2) >= 250 { print \">\"\$1\"\n\"\$2}' $QUERY > $TEMP_DIR/query_length_ge_250aa.fa
-		$MAKEBLASTDB -dbtype nucl -in $SUBJECT -out $TEMP_DIR/$(basename $SUBJECT) -title \"ref genome database\" -parse_seqids
-		$TBLASTN -db $TEMP_DIR/$(basename $SUBJECT) -query $TEMP_DIR/query_length_ge_250aa.fa -out $TEMP_DIR/${OUTBASE}.tmp -evalue $EVALUE -outfmt 6 -num_threads $THREADS
-		mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT"
-    fi
 
-    $BIOAWK -c fastx 'length($2) >= 250 { print ">"$1"\n"$2}' $QUERY > $TEMP_DIR/query_length_ge_250aa.fa
-    $MAKEBLASTDB -dbtype nucl -in $SUBJECT -out $TEMP_DIR/$(basename $SUBJECT) -title "ref genome database" -parse_seqids 
-	$TBLASTN -db $TEMP_DIR/$(basename $SUBJECT) -query $TEMP_DIR/query_length_ge_250aa.fa -out $TEMP_DIR/${OUTBASE}.tmp -evalue $EVALUE -outfmt 6 -num_threads $THREADS		
+
+	echo "Aligning..."
+  if $VERBOSE ; then
+   	echo "
+bioawk -c fastx 'length(\$2) >= 250 { print \">\"\$1\"\n\"\$2}' $QUERY > $TEMP_DIR/query_length_ge_250aa.fa
+makeblastdb -dbtype nucl -in $SUBJECT -out $TEMP_DIR/$(basename $SUBJECT) -title \"ref genome database\" -parse_seqids
+tblastn -db $TEMP_DIR/$(basename $SUBJECT) -query $TEMP_DIR/query_length_ge_250aa.fa -out $TEMP_DIR/${OUTBASE}.tmp -evalue $EVALUE -outfmt 6 -num_threads $THREADS
+mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT"
+  fi
+
+	#Filters out query sequences with lengths of less than 250
+	#Creates a blast database for SUBJECT
+	#Runs a tblastn search of the SUBJECT database
+	#Moves the alignment to OUTPUT
+	bioawk -c fastx 'length($2) >= 250 { print ">"$1"\n"$2}' $QUERY > $TEMP_DIR/query_length_ge_250aa.fa
+  makeblastdb -dbtype nucl -in $SUBJECT -out $TEMP_DIR/"$(basename $SUBJECT)" -title "ref genome database" -parse_seqids
+	if [[ "$?" -ne 0 ]]; then echo "Error: makeblastdb returned an error;exit now"; exit 1; fi
+  tblastn -db $TEMP_DIR/"$(basename $SUBJECT)" -query $TEMP_DIR/query_length_ge_250aa.fa -out $TEMP_DIR/${OUTBASE}.tmp -evalue $EVALUE -outfmt 6 -num_threads $THREADS
+	if [[ "$?" -ne 0 ]]; then echo "Error: tblastn returned an error;exit now"; exit 1; fi
 	mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT
-	
-	if [[ "$?" -ne 0 ]]; then
-		echo "Error: $TBLASTN returned an error;exit now"
-		exit 1
-	fi
 
 	# clean up
-	if [[ $KEEP -eq 0 ]]; then
+	if ! $KEEP ; then
 		rm -r $TEMP_DIR
 	fi
-	
+
 	echo "done."
 
 	# exit cleanly
 	exit 0
 }
 
+
 function func() {
 	function func_usage() {
 		echo "
 usage:	orfam func [options]
-
 options:
 	-R FILE reference file (fasta) (required)
 	-r FILE reference olfactory receptor (fasta) (required)
@@ -239,10 +205,19 @@ options:
 	-t INT  threads [1]
 	-T DIR 	temp directory [./tmpXXXXXXXX]
 	-k 		keep temporary files
-	-K FILE path to orfam.config file (default: same directory as orfam)
+	-K FILE orfam bin file (default: same directory as orfam)
 	-v 		verbose
 	-h 		show this message
-"
+
+Required executables:
+bioawk
+bedtools
+mafft
+megacc
+
+Required Python modules:
+biopython
+	"
 	}
 
 	# check options passed in
@@ -300,7 +275,7 @@ options:
 				TEMP_DIR="$OPTARG"
 				;;
 			K)
-				CONFIG="$OPTARG"
+				BIN="$OPTARG"
 				;;
 			v)
 				VERBOSE=1
@@ -308,70 +283,40 @@ options:
 			k)
 				KEEP=1
 				;;
+			?)
+				func_usage
+				exit 1
+				;;
 		esac
 	done
 
 	# check the relevant binaries
-	source_binaries $CONFIG
-    # check python modules
-    check_python_modules $PYTHON
-	if [[ ! -f $BIOAWK ]]; then
-		func_usage
-		echo -e "Error: bioawk executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $BEDTOOLS ]]; then
-		func_usage
-		echo -e "Error: bedtools executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $FASTATOOLS ]]; then
-		func_usage
-		echo -e "Error: fastatools executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $MAFFT ]]; then
-		func_usage
-		echo -e "Error: mafft executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $MEGACC ]]; then
-		func_usage
-		echo -e "Error: megacc executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $FINDORF ]]; then
-		func_usage
-		echo -e "Error: findorf.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $TM_GAP ]]; then
-		func_usage
-		echo -e "Error: tm_long_gap.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $START_CODON ]]; then
-		func_usage
-		echo -e "Error: start_codon.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $PHYLO ]]; then
-		func_usage
-		echo -e "Error: phylo.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
-	if [[ ! -f $ROOT_WITH_OUTGROUP ]]; then
-		func_usage
-		echo -e "Error: root_with_outgroup.py executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-		exit 1
-	fi
+	source_binaries $BIN
+
+	python -c "import Bio" 2>/dev/null ||\
+	{ echo "Bio module not found. Please check that it is installed"; func_usage; exit 1;}
+
+	for depbin in "bioawk" "bedtools" "mafft"
+	do
+		hash $depbin 2>/dev/null || { echo >&2 "$depbin not found. Please check that it is installed"; func_usage; exit 1;}
+	done
+
+
+
+	# if [[ ! -f $MEGACC ]]; then
+	# 	func_usage
+	# 	echo -e "Error: megacc executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
+	# 	exit 1
+	# fi
+
+
 
 	if [[ -z $OUTPUT ]]; then
 		func_usage
 		echo "Error: output file are required.\n"
 		exit 1
 	fi
-	
+
 	OUTBASE=$( basename "$OUTPUT" )
 	OUT_BEST_HIT="${OUTBASE}_best_hit.gff"
 	OUT_INTACT="${OUTBASE}_intact.fa"
@@ -394,35 +339,35 @@ options:
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo "Get best hits..."
 	fi
-	
+
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "
-		cat $ALIGNMENT | awk -v OFS='\t' '{ if((\$9<\$10)) { strand=\"+\" } else { strand=\"-\"; tmp=\$10; \$10=\$9; \$9=tmp } print \$2,\"TBLASTN\",\"similarity\",\$9,\$10,\$11,strand,\".\",\"qseqid=\"\$1\";qstart=\"\$7\";qend=\"\$8\";pident=\"\$3\";length=\"\$4\";mismatch=\"\$5\";gapopen=\"\$6\";bitscore=\"\$12 }' \
-		| sort -k7,7 -k1,1 -k4n,4 \
-		| $BEDTOOLS cluster -s -i /dev/stdin > $TEMP_DIR/blast_hit_clusters.gff
-			
+		cat $ALIGNMENT | awk -v OFS='\t' '{ if((\$9<\$10)) { strand=\"+\" } else { strand=\"-\"; tmp=\$10; \$10=\$9; \$9=tmp } print \$2,\"TBLASTN\",\"similarity\",\$9,\$10,\$11,strand,\".\",\"qseqid=\"\$1\";qstart=\"\$7\";qend=\"\$8\";pident=\"\$3\";length=\"\$4\";mismatch=\"\$5\";gapopen=\"\$6\";bitscore=\"\$12 }' |\
+		sort -k7,7 -k1,1 -k4n,4 |\
+		$BEDTOOLS cluster -s -i /dev/stdin > $TEMP_DIR/blast_hit_clusters.gff
+
 		paste $TEMP_DIR/blast_hit_clusters.gff <(cat $TEMP_DIR/blast_hit_clusters.gff | cut -f 9 | cut -f 8 -d ';' | cut -f 2 -d '=') \
 		| sort -k10n,10 -k6g,6 -k11gr,11 \
-		| awk '!arr[$10]++' | cut -f 1-9 > $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp
+		| awk '!arr[${10}]++' | cut -f 1-9 > $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp
 		mv $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp $OUT_BEST_HIT
 			"
 	fi
 
 	# Formats alignment as a GFF file
-	# Sorts by strand, subject id and subject start position 
+	# Sorts by strand, subject id and subject start position
 	# Then uses bedtools to create clusters of hits with overlapping bases
-	cat $ALIGNMENT | awk -v OFS='\t' '{ if(($9<$10)) { strand="+" } else { strand="-"; tmp=$10; $10=$9; $9=tmp } print $2,"TBLASTN","similarity",$9,$10,$11,strand,".","qseqid="$1";qstart="$7";qend="$8";pident="$3";length="$4";mismatch="$5";gapopen="$6";bitscore="$12 }' \
-	| sort -k7,7 -k1,1 -k4n,4 \
-	| $BEDTOOLS cluster -s -i /dev/stdin > $TEMP_DIR/blast_hit_clusters.gff
-	
+	cat $ALIGNMENT | awk -v OFS='\t' '{ if(($9<$10)) { strand="+" } else { strand="-"; tmp=$10; $10=$9; $9=tmp } print $2,"TBLASTN","similarity",$9,$10,$11,strand,".","qseqid="$1";qstart="$7";qend="$8";pident="$3";length="$4";mismatch="$5";gapopen="$6";bitscore="$12 }' |\
+	sort -k7,7 -k1,1 -k4n,4 |\
+	$BEDTOOLS cluster -s -i /dev/stdin > $TEMP_DIR/blast_hit_clusters.gff
+
 	# Adds another column with the bit score for each hit
 	# Sorts by cluster, then e-score, then bit score
 	# Takes the top hit for each cluster, discards hits with lengths of less than 50
-	paste $TEMP_DIR/blast_hit_clusters.gff <(cat $TEMP_DIR/blast_hit_clusters.gff | cut -f 9 | cut -f 8 -d ';' | cut -f 2 -d '=') \
-	| sort -k10n,10 -k6g,6 -k11gr,11 \
-	| awk '!arr[$10]++' | cut -f 1-9 | awk '($5-$4+1)/3>=50' > $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp
+	paste $TEMP_DIR/blast_hit_clusters.gff <(cat $TEMP_DIR/blast_hit_clusters.gff | cut -f 9 | cut -f 8 -d ';' | cut -f 2 -d '=') |\
+	sort -k10n,10 -k6g,6 -k11gr,11 |\
+	awk '!arr[$10]++' | cut -f 1-9 | awk '($5-$4+1)/3>=50' > $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp
 	mv $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp $OUT_BEST_HIT
-	
+
 	if [[ "$?" -ne 0 ]]; then
 		echo -e "Error: get best hits returned an error; exit now"
 		exit 1
@@ -436,9 +381,9 @@ options:
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "awk '(\$5-\$4+1)/3>=250' ${OUTBASE}_best_hit.gff > $TEMP_DIR/blast_hits_250_aa.gff"
 	fi
-	
+
 	awk '($5-$4+1)/3>=250' ${OUTBASE}_best_hit.gff > $TEMP_DIR/blast_hits_250_aa.gff
-	
+
 	# criteria 2
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "Criteria 2: add flanking sequences and find intact ORF (ATG ~ stop codon)"
@@ -446,21 +391,21 @@ options:
 
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "
-		$PYTHON $FINDORF $REFERENCE $TEMP_DIR/blast_hits_250_aa.gff \
-		| $BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout \
-		| $PYTHON $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa"
+		$PYTHON $FINDORF $REFERENCE $TEMP_DIR/blast_hits_250_aa.gff |\
+		$BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout |\
+		$PYTHON $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa"
 	fi
-	
-	# Uses included python script findorf.py to get potential orfs from all 6 
+
+	# Uses included python script findorf.py to get potential orfs from all 6
 	# reading frames for each blast hit coordinates
-	# Get sequences for those orfs and calls fastatools translate function to 
+	# Get sequences for those orfs and calls fastatools translate function to
 	# create a protein fasta file of all the orfs
 	# DOES THIS CHECK TO MAKE SURE THE ORF MATCHES THE HIT?
 	# SO, THIS DOESN'T CHECK IF ORF MATCHES HIT. WORST CASE SCENARIO, EACH HIT RESULTS IN 6 ORFS INSTEAD OF 1
-	$PYTHON $FINDORF $REFERENCE $TEMP_DIR/blast_hits_250_aa.gff \
-	| $BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout \
-	| $PYTHON $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa
-	
+	$PYTHON $FINDORF $REFERENCE $TEMP_DIR/blast_hits_250_aa.gff |\
+	$BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout |\
+	$PYTHON $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa
+
 	if [[ "$?" -ne 0 ]]; then
 		echo -e "Error: when find Opening Read Frame."
 		exit 1
@@ -470,35 +415,35 @@ options:
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "Criteria 3: multiple alignment and exclude or candidates which have long gaps (>=5) within transmembrane regions."
 	fi
-	
+
 	# this divides the open reading frame file into fastas of 400 or less
 	awk -v i=0 -v d=0 "/^>/ && i++%400==0{s=\"$TEMP_DIR/open_reading_frame_\"++d\".fa\"} {print > s}" ${TEMP_DIR}/open_reading_frame.fa
-	
+
 	# Cycles through all of the reading frame fasta files
 	i=0
 	for FASTA in $TEMP_DIR/open_reading_frame_*.fa; do
 		i=$((i+1))
-		
+
 		# puts the commands to be run in a text file
 		# Adds the reference OR to the open reading frames
 		# Aligns the sequences with MAFFT
 		# Sends alignment along with OR REF and OR REF TM bed file to tm_gap
 		# Gets back a GFF file with the start and stop of sequences with intact
-		# TM regions. 
-		# Sends that to Bedtools to get a fasta from the subject sequence, then 
+		# TM regions.
+		# Sends that to Bedtools to get a fasta from the subject sequence, then
 		# translates the fastas, adds the OR REF, aligns with mafft, and sends
 		# to a sequence alighnment fasta.
 		echo "
-		cat $FASTA $OR_REF \
-		| $MAFFT --maxiterate 1000 --genafpair --thread $THREADS /dev/stdin \
-		| $PYTHON $TM_GAP --ref_or $OR_REF --ref_or_tm $OR_TM --orf_aln /dev/stdin \
-		| $BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout \
-		| $PYTHON $FASTATOOLS translate /dev/stdin \
-		| cat /dev/stdin $OR_REF \
-		| $MAFFT --maxiterate 1000 --genafpair --thread $THREADS /dev/stdin > $TEMP_DIR/excluded_long_gap_${i}_aln.fa \
+		cat $FASTA $OR_REF |\
+		$MAFFT --maxiterate 1000 --genafpair --thread $THREADS /dev/stdin |\
+		$PYTHON $TM_GAP --ref_or $OR_REF --ref_or_tm $OR_TM --orf_aln /dev/stdin |\
+		$BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout |\
+		$PYTHON $FASTATOOLS translate /dev/stdin |\
+		cat /dev/stdin $OR_REF |\
+		$MAFFT --maxiterate 1000 --genafpair --thread $THREADS /dev/stdin > $TEMP_DIR/excluded_long_gap_${i}_aln.fa \
 		"
 		done > $TEMP_DIR/command.txt
-		
+
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo "
 		cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS"
@@ -506,37 +451,37 @@ options:
 
 	cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS
 	rm $TEMP_DIR/open_reading_frame_*.fa
-	
-	
+
+
 	if [[ "$?" -ne 0 ]]; then
 		echo "Error: criteria 3, exclude sequences with log gaps in transmembrane regions."
 		exit 1
 	fi
-	
+
 	# criteria 4
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "Criteria 4: assigning a proper initiation codon"
 	fi
-	
+
 	# Cycles through all the fasta files with intact TM regions
 	i=0
 	for FASTA in ${TEMP_DIR}/excluded_long_gap_*_aln.fa; do
 		i=$((i+1))
-		
+
 		#Sends REFERENCE, OR_REF, OR_TM and FASTA to start codon
 		echo -e "
-		$PYTHON $START_CODON --genome $REFERENCE --or_ref $OR_REF --or_ref_tm $OR_TM --orf_aln $FASTA \
-		| $BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout \
-		| $PYTHON $FASTATOOLS translate /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}.fa.tmp"
+		$PYTHON $START_CODON --genome $REFERENCE --or_ref $OR_REF --or_ref_tm $OR_TM --orf_aln $FASTA |\
+		$BEDTOOLS getfasta -s -fi $REFERENCE -bed /dev/stdin -fo /dev/stdout |\
+		$PYTHON $FASTATOOLS translate /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}.fa.tmp"
 	done > $TEMP_DIR/command.txt
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo "cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS"
 	fi
-	
+
 	cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS
 	cat $TEMP_DIR/assigned_start_codon_*.fa.tmp > $TEMP_DIR/assigned_start_codon.fa
 	rm $TEMP_DIR/assigned_start_codon_*.fa.tmp
-	
+
 	if [[ "$?" -ne 0 ]]; then
 		echo "Error: criteria 4, assigning a proper start codon."
 		exit 1
@@ -559,94 +504,49 @@ options:
 		echo "
 		cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS"
 	fi
-	
+
 	cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS
 	rm $TEMP_DIR/assigned_start_codon_aa_*.fa
-	
+
 	if [[ "$?" -ne 0 ]]; then
 		echo "Error: criteria 4, multiple sequence alignment for construction of phylogenetic tree."
 		exit 1
 	fi
 
-	# megacc
-	cat "${TEMP_DIR}/outgroup.fa" | grep '>' | cut -f 2 -d '>' | awk '{print $0"=outgroup"}' > "${TEMP_DIR}/outgroup.txt"
-	i=0
-	rm -f $TEMP_DIR/phylo_tree_*
-	for FASTA in ${TEMP_DIR}/assigned_start_codon_*_aln.fa; do
-		i=$((i+1))
-		echo "
-		$MEGACC -a $SETTING -d $FASTA -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}"
-	done > ${TEMP_DIR}/command.txt
-	
-	if [[ $VERBOSE -eq 1 ]]; then
-		echo "
-		cat ${TEMP_DIR}/command.txt | $PARALLEL -j $THREADS"
-	fi
-	
-	cat ${TEMP_DIR}/command.txt | $PARALLEL -j $THREADS
-
-	# discard non-OR genes that form a clade with the genes of outgroup
-	$BIOAWK -c fastx '{print $1}' $OUTGROUP | cut -f 2 -d '>' > ${TEMP_DIR}/outgroup_ids.txt
-	i=0
-	for NWK in ${TEMP_DIR}/phylo_tree_*.nwk; do
-		i=$((i+1))
-		echo "
-		$PYTHON $PHYLO $NWK ${TEMP_DIR}/outgroup_ids.txt > ${TEMP_DIR}/non_or_within_outgroup_ids_${i}.txt"
-	done > ${TEMP_DIR}/command.txt
-		
-	cat ${TEMP_DIR}/command.txt | $PARALLEL -j $THREADS
-		
-	$PYTHON $FASTATOOLS exclude $TEMP_DIR/assigned_start_codon.fa <( cat $TEMP_DIR/non_or_within_outgroup_ids_*.txt ) > $OUT_INTACT
-	
-	if [[ "$?" -ne 0 ]]; then
-		echo "Error: criteria 4, construction of phylogenetic tree."
-		exit 1
-	fi
-
-<<MARK    
-	# megacc
-	if ! ls | grep "$OUTPUT-intact-.*-rooted.nwk" > /tmp/null; then
-		awk -v i=0 -v d=0 "/^>/ && n++%200==0{s=\"$TEMP_DIR/$OUTPUT-intact-split-\"++d\".fa\"} {print > s}" ${OUTBASE}_intact.fa
-		i=0
-		for FASTA in $TEMP_DIR/$OUTPUT-intact-split-*.fa; do
-			i=$((i+1))
-			echo "
-			cat $FASTA $TEMP_DIR/outgroup.fa \
-			| $MAFFT --maxiterate 1000 --genafpair --thread $THREADS /dev/stdin > $TEMP_DIR/$OUTPUT-intact-aln-${i}.fa
-			"
-		done > $TEMP_DIR/command.txt
-		if [[ $VERBOSE -eq 1 ]]; then
-			echo "
-			cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS"
-		fi
-		cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS
-
-		i=0
-		for FASTA in $TEMP_DIR/$OUTPUT-intact-aln-*.fa; do
-			i=$((i+1))
-			echo "
-			$MEGACC -a $SETTING -d $FASTA -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/$OUTPUT-intact-${i}"
-		done > $TEMP_DIR/command.txt
-		cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS
-
-		i=0
-		for TREE in $TEMP_DIR/$OUTPUT-intact-*.nwk; do
-			i=$((i+1))
-			echo "
-			$PYTHON $ROOT_WITH_OUTGROUP $TREE $TEMP_DIR/outgroup_ids.txt > ${TEMP_DIR}/$OUTPUT-intact-${i}-rooted.nwk"
-		done > $TEMP_DIR/command.txt
-		cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS
-
-		rm $TEMP_DIR/$OUTPUT-intact-split-*.fa
-	fi
-
-	if [[ "$?" -ne 0 ]]; then
-		echo "Error: criteria 4, construction of phylogenetic tree with megacc."
-		exit 1
-	fi
-MARK
-
-	
+	# # megacc
+	# cat "${TEMP_DIR}/outgroup.fa" | grep '>' | cut -f 2 -d '>' | awk '{print $0"=outgroup"}' > "${TEMP_DIR}/outgroup.txt"
+	# i=0
+	# rm -f $TEMP_DIR/phylo_tree_*
+	# for FASTA in ${TEMP_DIR}/assigned_start_codon_*_aln.fa; do
+	# 	i=$((i+1))
+	# 	echo "
+	# 	$MEGACC -a $SETTING -d $FASTA -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}"
+	# done > ${TEMP_DIR}/command.txt
+	#
+	# if [[ $VERBOSE -eq 1 ]]; then
+	# 	echo "
+	# 	cat ${TEMP_DIR}/command.txt | $PARALLEL -j $THREADS"
+	# fi
+	#
+	# cat ${TEMP_DIR}/command.txt | $PARALLEL -j $THREADS
+	#
+	# # discard non-OR genes that form a clade with the genes of outgroup
+	# $BIOAWK -c fastx '{print $1}' $OUTGROUP | cut -f 2 -d '>' > ${TEMP_DIR}/outgroup_ids.txt
+	# i=0
+	# for NWK in ${TEMP_DIR}/phylo_tree_*.nwk; do
+	# 	i=$((i+1))
+	# 	echo "
+	# 	$PYTHON $PHYLO $NWK ${TEMP_DIR}/outgroup_ids.txt > ${TEMP_DIR}/non_or_within_outgroup_ids_${i}.txt"
+	# done > ${TEMP_DIR}/command.txt
+	#
+	# cat ${TEMP_DIR}/command.txt | $PARALLEL -j $THREADS
+	#
+	# $PYTHON $FASTATOOLS exclude $TEMP_DIR/assigned_start_codon.fa <( cat $TEMP_DIR/non_or_within_outgroup_ids_*.txt ) > $OUT_INTACT
+	#
+	# if [[ "$?" -ne 0 ]]; then
+	# 	echo "Error: criteria 4, construction of phylogenetic tree."
+	# 	exit 1
+	# fi
 
 	echo "done."
 
@@ -654,7 +554,7 @@ MARK
 }
 
 # identify pseudo genes
-function pseudo(){ 
+function pseudo(){
 	function pseudo_usage(){
 		echo "
 usage:	orfam pseudo [options]
@@ -728,10 +628,10 @@ options:
 
 	# check the relevant binaries
 	source_binaries $CONFIG
-	
+
 	# check python modules
 	check_python_modules $PYTHON
-	
+
 	if [[ ! -f $EXONERATE ]]; then
 		pseudo_usage
 		echo -e "Error: exonerate executable not found. Please set path in $ORFAM_DIR/orfam.config file."
@@ -742,7 +642,7 @@ options:
 		echo -e "Error: pseudogene.py executable not found. Please set path in $ORFAM_DIR/orfam.config file."
 		exit 1
 	fi
-	
+
 	# check that the required file exit
 	if [[ ! -f $SUBJECT ]]; then
 		pseudo_usage
@@ -780,7 +680,7 @@ options:
 		$PYTHON $PSEUDOGENE -s $SUBJECT -q $QUERY -b $BEST_HITS -i $INTACT_GENE -T $TEMP_DIR
 		"
 	fi
-	
+
 	$PYTHON $PSEUDOGENE -s $SUBJECT -q $QUERY -b $BEST_HITS -i $INTACT_GENE -o $OUTPUT -T $TEMP_DIR
 }
 
@@ -804,7 +704,7 @@ while getopts "h:" OPTION; do
 done
 
 # call the function
-case "$1" in 
+case "$1" in
     'align')
     	align "${@:2}"
     	;;
