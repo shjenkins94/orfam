@@ -31,14 +31,11 @@ def _exclude(args):
             print(record.format('fasta'))
 
 
-<<<<<<< Updated upstream
 def _id_list(args):
     for record in SeqIO.parse(args.fasta, 'fasta'):
         print(record.id)
 
 
-=======
->>>>>>> Stashed changes
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="FASTA sequence manipulation tools")
