@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import argparse
 
-from Bio import SeqIO
 from Bio import AlignIO
 
 
@@ -34,7 +33,7 @@ def find_tm1(aln_seq, or_tms):
 #    The function then attempts to get the index of the reference or. If it
 #    can't, error.
 #    The alignment sequence of REF OR, and the list of TM regions are sent to
-#    find_tms.
+#    find_tm1.
 def assign_start_codon(args):
     with open(args.orf_aln, "rU") as in_orf_aln:
         orf_aln = AlignIO.read(in_orf_aln, "fasta")
@@ -65,7 +64,13 @@ def assign_start_codon(args):
                         " (" + ref_id + ")")
 
     tm1_start = find_tm1(orf_aln[ref_or_index].seq, or_tms)
-
+# 4. The region from the start of the sequence to the start of TM1 is
+#    extracted from the alignment as upstream. If upstream contains a start
+#    codon, then it divides upstream into 3 regions: a (start of ORF to -34)
+#    b (-34 to -20) and c (-20 to TM1). Depending on whether a, b or c
+#    contain start codons, the index of the start codon is decided. This index
+#    is either the last M in b, the last M in a, or the first m in c. then
+#    each orf is formatted as a gff entry with its new start codon.
     upstream = orf_aln[:, :tm1_start]
     real_start = []
     for record in upstream:
