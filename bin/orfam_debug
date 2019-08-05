@@ -36,7 +36,7 @@ function source_binaries() {
   FINDORF=$BIN/findorf.py
 	TM_GAP=$BIN/tm_gap_debug.py
   START_CODON=$BIN/start_codon_debug.py
-  PHYLO=$BIN/phylo_tree.py
+  PHYLO=$BIN/phylo_tree_debug.py
   ROOT_WITH_OUTGROUP=$BIN/root_with_outgroup.py
   PSEUDOGENE=$BIN/pseudogene.py
 
@@ -321,11 +321,11 @@ biopython
 		exit 1
 	fi
 
-	# if [[ ! -f $MAO ]]; then
-	# 	func_usage
-	# 	echo -e "Error: -M FILE	settings for construction of phylogenetic tree (MAO) not found.\n"
-	# 	exit 1
-	# fi
+	if [[ ! -f $MAO ]]; then
+		func_usage
+		echo -e "Error: -M FILE	settings for construction of phylogenetic tree (MAO) not found.\n"
+		exit 1
+	fi
 
 	if [[ -z $PREFIX ]]; then
 		func_usage
@@ -339,16 +339,10 @@ biopython
 	python -c "import Bio" 2>/dev/null ||\
 	{ func_usage; echo "Bio module not found. Please check that it is installed";  exit 1;}
 
-	for depbin in "bioawk" "bedtools" "mafft"
+	for depbin in "bioawk" "bedtools" "mafft" "megacc"
 	do
 		hash $depbin 2>/dev/null || { func_usage; echo >&2 "$depbin not found. Please check that it is installed"; exit 1;}
 	done
-
-	# if [[ ! -f $MEGACC ]]; then
-	# 	func_usage
-	# 	echo -e "Error: megacc executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-	# 	exit 1
-	# fi
 
 	OUTBASE=$( basename "$PREFIX" )
 	OUT_BEST_HIT="${PREFIX}_best_hit.gff"
@@ -438,7 +432,7 @@ python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa\n"
 	# Get sequences for those orfs and calls fastatools translate function to
 	# create a protein fasta file of all the orfs
 
-	#Keep this here? or put it somewhere else?
+	# Creates a file with subject chromosome/scaffold lengths for bedtools
 	samtools faidx $SUBJECT
 	cat $SUBJECT.fai |\
 	cut -f 1,2 > $TEMP_DIR/sub.sizes
@@ -550,66 +544,71 @@ python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}.fa
 		exit 1
 	fi
 
-	# # phylogenetic tree
-	# n=0
-	# d=0
-	# awk "/^>/ && n++%200==0{s=\"$TEMP_DIR/assigned_start_codon_aa_\"++d\".fa\"} {print > s}" $TEMP_DIR/assigned_start_codon.fa
-	# # remove the description of the fasta file
-	# $BIOAWK -c fastx '{print ">"$1"\n"$2}' $OUTGROUP > "${TEMP_DIR}/outgroup.fa"
-	# i=0
-	# for FASTA in ${TEMP_DIR}/assigned_start_codon_aa_*.fa; do
-	# 	i=$((i+1))
-	# 	echo "
-	# 	cat $FASTA $TEMP_DIR/outgroup.fa \
-	# 	| $MAFFT --maxiterate 1000 --genafpair --thread $THREADS /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}_aln.fa"
-	# done > $TEMP_DIR/command.txt
-	# if $VERBOSE; then
-	# 	echo "
-	# 	cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS"
-	# fi
-	#
-	# cat $TEMP_DIR/command.txt | $PARALLEL -j $THREADS
-	# rm $TEMP_DIR/assigned_start_codon_aa_*.fa
-	#
-	# if [[ "$?" -ne 0 ]]; then
-	# 	echo "Error: criteria 4, multiple sequence alignment for construction of phylogenetic tree."
-	# 	exit 1
-	# fi
-	#
-	# # # megacc
-	# # cat "${TEMP_DIR}/outgroup.fa" | grep '>' | cut -f 2 -d '>' | awk '{print $0"=outgroup"}' > "${TEMP_DIR}/outgroup.txt"
-	# # i=0
-	# # rm -f $TEMP_DIR/phylo_tree_*
-	# # for FASTA in ${TEMP_DIR}/assigned_start_codon_*_aln.fa; do
-	# # 	i=$((i+1))
-	# # 	echo "
-	# # 	$MEGACC -a $MAO -d $FASTA -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}"
-	# # done > ${TEMP_DIR}/command.txt
-	# #
-	# # if VERBOSE; then
-	# # 	echo "
-	# # 	cat ${TEMP_DIR}/command.txt | $PARALLEL -j $THREADS"
-	# # fi
-	# #
-	# # cat ${TEMP_DIR}/command.txt | $PARALLEL -j $THREADS
-	# #
-	# # # discard non-OR genes that form a clade with the genes of outgroup
-	# # $BIOAWK -c fastx '{print $1}' $OUTGROUP | cut -f 2 -d '>' > ${TEMP_DIR}/outgroup_ids.txt
-	# # i=0
-	# # for NWK in ${TEMP_DIR}/phylo_tree_*.nwk; do
-	# # 	i=$((i+1))
-	# # 	echo "
-	# # 	$PYTHON $PHYLO $NWK ${TEMP_DIR}/outgroup_ids.txt > ${TEMP_DIR}/non_or_within_outgroup_ids_${i}.txt"
-	# # done > ${TEMP_DIR}/command.txt
-	# #
-	# # cat ${TEMP_DIR}/command.txt | $PARALLEL -j $THREADS
-	# #
-	# # $PYTHON $FASTATOOLS exclude $TEMP_DIR/assigned_start_codon.fa <( cat $TEMP_DIR/non_or_within_outgroup_ids_*.txt ) > $OUT_INTACT
-	# #
-	# # if [[ "$?" -ne 0 ]]; then
-	# # 	echo "Error: criteria 4, construction of phylogenetic tree."
-	# # 	exit 1
-	# # fi
+	# phylogenetic tree
+	awk "/^>/ && n++%200==0{s=\"$TEMP_DIR/assigned_start_codon_aa_\"++d\".fa\"} {print > s}" $TEMP_DIR/assigned_start_codon.fa
+	# remove the description of the fasta sequences from heading
+	bioawk -c fastx '{print ">"$1"\n"$2}' $OUTGROUP > "${TEMP_DIR}/outgroup.fa"
+	i=0
+	for FASTA in ${TEMP_DIR}/assigned_start_codon_aa_*.fa; do
+		i=$((i+1))
+		echo "
+cat $FASTA $TEMP_DIR/outgroup.fa |\
+mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}_aln.fa"
+	done > $TEMP_DIR/command.txt
+	if $VERBOSE; then
+		echo "
+cat $FASTA $TEMP_DIR/outgroup.fa |
+mafft --maxiterate 1000 --quiet --genafpair --thread $THREADS /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}_aln.fa"
+	fi
+
+	cat $TEMP_DIR/command.txt | parallel -j $THREADS
+	rm $TEMP_DIR/assigned_start_codon_aa_*.fa
+
+	if [[ "$?" -ne 0 ]]; then
+		echo "Error: criteria 4, multiple sequence alignment for construction of phylogenetic tree."
+		exit 1
+	fi
+
+	# megacc
+	#Creates a text file with outgroup id = outgroup
+	cat "${TEMP_DIR}/outgroup.fa" | grep '>' | cut -f 2 -d '>' | awk '{print $0"=outgroup"}' > "${TEMP_DIR}/outgroup.txt"
+	i=0
+
+	for FASTA in ${TEMP_DIR}/assigned_start_codon_*_aln.fa; do
+		i=$((i+1))
+		echo "
+megacc -a $MAO -d $FASTA -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}"
+	done > ${TEMP_DIR}/command.txt
+
+	if $VERBOSE; then
+		echo "
+megacc -a $MAO -d $FASTA -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}"
+	fi
+
+	cat ${TEMP_DIR}/command.txt | parallel -j $THREADS
+
+	# discard non-OR genes that form a clade with the genes of outgroup
+	bioawk -c fastx '{print $1}' $OUTGROUP | cut -f 2 -d '>' > ${TEMP_DIR}/outgroup_ids.txt
+	i=0
+	for NWK in ${TEMP_DIR}/phylo_tree_*.nwk; do
+		i=$((i+1))
+		echo "
+python $PHYLO $NWK '${TEMP_DIR}/outgroup_ids.txt' > '${TEMP_DIR}/non_or_within_outgroup_ids_${i}.txt'"
+	done > ${TEMP_DIR}/command.txt
+
+	cat ${TEMP_DIR}/command.txt | parallel -j $THREADS
+
+	cat ${TEMP_DIR}/non_or_within_outgroup_ids_*.txt > ${TEMP_DIR}/non_or_within_outgroup_ids.txt
+	rm ${TEMP_DIR}/non_or_within_outgroup_ids_*.txt
+
+	python $FASTATOOLS exclude ${TEMP_DIR}/assigned_start_codon.fa <( cat ${TEMP_DIR}/non_or_within_outgroup_ids.txt ) > $OUT_INTACT
+
+	rm -f $TEMP_DIR/phylo_tree_*
+
+	if [[ "$?" -ne 0 ]]; then
+		echo "Error: criteria 4, construction of phylogenetic tree."
+		exit 1
+	fi
 
 
 	if ! $KEEP ; then
