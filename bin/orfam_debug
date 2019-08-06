@@ -365,7 +365,9 @@ biopython
 	fi
 
 	python $FASTATOOLS id_list $OR_REF > $TEMP_DIR/rem_id.txt
+	python $FASTATOOLS id_list $OUTGROUP > $TEMP_DIR/out_id.txt
 	REM_ID=$TEMP_DIR/rem_id.txt
+	OUT_ID=$TEMP_DIR/out_id.txt
 
 	# Get best hits
 	if $VERBOSE; then
@@ -545,6 +547,7 @@ python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}.fa
 	fi
 
 	# phylogenetic tree
+	#Split into 200 sequences
 	awk "/^>/ && n++%200==0{s=\"$TEMP_DIR/assigned_start_codon_aa_\"++d\".fa\"} {print > s}" $TEMP_DIR/assigned_start_codon.fa
 	# remove the description of the fasta sequences from heading
 	bioawk -c fastx '{print ">"$1"\n"$2}' $OUTGROUP > "${TEMP_DIR}/outgroup.fa"
@@ -571,7 +574,7 @@ mafft --maxiterate 1000 --quiet --genafpair --thread $THREADS /dev/stdin > $TEMP
 
 	# megacc
 	#Creates a text file with outgroup id = outgroup
-	cat "${TEMP_DIR}/outgroup.fa" | grep '>' | cut -f 2 -d '>' | awk '{print $0"=outgroup"}' > "${TEMP_DIR}/outgroup.txt"
+	awk '{print $0"=outgroup"}' $OUT_ID > "${TEMP_DIR}/outgroup.txt"
 	i=0
 
 	for FASTA in ${TEMP_DIR}/assigned_start_codon_*_aln.fa; do
