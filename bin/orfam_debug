@@ -606,7 +606,7 @@ python $PHYLO $NWK '${TEMP_DIR}/outgroup_ids.txt' > '${TEMP_DIR}/non_or_within_o
 
 	python $FASTATOOLS exclude ${TEMP_DIR}/assigned_start_codon.fa <( cat ${TEMP_DIR}/non_or_within_outgroup_ids.txt ) > $OUT_INTACT
 
-	rm -f $TEMP_DIR/phylo_tree_*
+	# rm -f $TEMP_DIR/phylo_tree_*
 
 	if [[ "$?" -ne 0 ]]; then
 		echo "Error: criteria 4, construction of phylogenetic tree."
