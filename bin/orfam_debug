@@ -194,7 +194,7 @@ function func() {
 		echo "
 usage:	orfam func [options]
 
-NEW:
+options:
 -S FILE	subject genome (FASTA)
 -H FILE orfam align output (tabular) (required)
 -R FILE	reference olfactory receptor (FASTA) (required)
