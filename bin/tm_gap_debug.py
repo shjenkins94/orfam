@@ -45,13 +45,13 @@ def find_tms(aln_seq, or_tms):
 #    The alignment sequence of REF OR, and the list of TM regions are sent to
 #    find_tms.
 def exclude_tm_long_gap(args):
-    with open(args.orf_aln, "rU") as in_orf_aln:
+    with open(args.orf_aln, "r") as in_orf_aln:
         orf_aln = AlignIO.read(in_orf_aln, "fasta")
-    with open(args.rem_id, "rU") as in_rem_id:
+    with open(args.rem_id, "r") as in_rem_id:
         remove_names = in_rem_id.read().splitlines()
     or_tms = []
     ref_id = []
-    with open(args.ref_or_tm, "rU") as in_ref_or_tm:
+    with open(args.ref_or_tm, "r") as in_ref_or_tm:
         for line in in_ref_or_tm:
             cols = line.rstrip().split()
             assert(len(cols) == 3)

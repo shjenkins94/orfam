@@ -296,19 +296,10 @@ biopython
 	python -c "import Bio" 2>/dev/null ||\
 	{ echo "Bio module not found. Please check that it is installed"; func_usage; exit 1;}
 
-	for depbin in "bioawk" "bedtools" "mafft"
+	for depbin in "bioawk" "bedtools" "mafft" "megacc"
 	do
 		hash $depbin 2>/dev/null || { echo >&2 "$depbin not found. Please check that it is installed"; func_usage; exit 1;}
 	done
-
-
-
-	# if [[ ! -f $MEGACC ]]; then
-	# 	func_usage
-	# 	echo -e "Error: megacc executable not found. Please set path in $ORFAM_DIR/orfam.config file\n"
-	# 	exit 1
-	# fi
-
 
 
 	if [[ -z $OUTPUT ]]; then

@@ -34,13 +34,12 @@ function source_binaries() {
 
 	FASTATOOLS=$BIN/fastatools.py
   FINDORF=$BIN/findorf.py
-	TM_GAP=$BIN/tm_gap_debug.py
+	CON_GAP=$BIN/con_gap.py
   START_CODON=$BIN/start_codon_debug.py
   PHYLO=$BIN/phylo_tree_debug.py
-  ROOT_WITH_OUTGROUP=$BIN/root_with_outgroup.py
   PSEUDOGENE=$BIN/pseudogene.py
 
-	for PYPACK in $FASTATOOLS $FINDORF $TM_GAP $START_CODON $PHYLO $ROOT_WITH_OUTGROUP $PSEUDOGENE
+	for PYPACK in $FASTATOOLS $FINDORF $CON_GAP $START_CODON $PHYLO $PSEUDOGENE
 	do
 		if [[ ! -f $PYPACK ]]; then
 			func_usage
@@ -197,9 +196,9 @@ usage:	orfam func [options]
 options:
 -S FILE	subject genome (FASTA)
 -H FILE orfam align output (tabular) (required)
--R FILE	reference olfactory receptor (FASTA) (required)
--b FILE	transmembrane regions of reference olfactory receptor (BED) (required)
--O FILE	non-olfactory receptor sequences for outgroup (FASTA) (required)
+-R FILE	reference sequences (FASTA) (required)
+-I FILE table of reference sequence ids and which group they belong to (tabular) (required)
+-b FILE	bed files for reference olfactory receptors (BED) (required)
 -M FILE	settings for construction of phylogenetic tree (MAO)
 -P STR	path to output file ending with a prefix for labeling output files (required)
 -B DIR	location of orfam bin file [same directory as program]
@@ -229,9 +228,9 @@ biopython
 	# set defaults
 	SUBJECT=""
 	HITS=""
-	OR_REF=""
-	OR_TM=""
-	OUTGROUP=""
+	ALL_REF=""
+	ALL_ID=""
+	ALL_BED=""
 	MAO=""
 	PREFIX=""
 	BIN=$(dirname $0)
@@ -240,7 +239,7 @@ biopython
 	KEEP=false
 	VERBOSE=false
 
-	while getopts ":S:H:R:b:O:M:P:B:T:t:kvh" OPTION; do
+	while getopts ":S:H:R:I:b:M:P:B:T:t:kvh" OPTION; do
 		case "$OPTION" in
 			S)
 				SUBJECT="$OPTARG"
@@ -249,14 +248,13 @@ biopython
 				HITS="$OPTARG"
 				;;
 			R)
-				OR_REF="$OPTARG"
+				ALL_REF="$OPTARG"
+				;;
+			I)
+				ALL_ID="$OPTARG"
 				;;
 			b)
-				OR_TM="$OPTARG"
-				;;
-
-			O)
-				OUTGROUP="$OPTARG"
+				ALL_BED="$OPTARG"
 				;;
 			M)
 				MAO="$OPTARG"
@@ -303,21 +301,21 @@ biopython
 		exit 1
 	fi
 
-	if [[ ! -f $OR_REF ]]; then
+	if [[ ! -f $ALL_REF ]]; then
 		func_usage
-		echo -e "Error: -R FILE	reference olfactory receptor (FASTA) not found.\n"
+		echo -e "Error: -R FILE	reference sequences (FASTA) not found.\n"
 		exit 1
 	fi
 
-	if [[ ! -f $OR_TM ]]; then
+	if [[ ! -f $ALL_ID ]]; then
 		func_usage
-		echo -e "Error: -b FILE	transmembrane regions of reference olfactory receptor (BED) not found.\n"
+		echo -e "Error: -b FILE	reference sequence ids (tabular) not found.\n"
 		exit 1
 	fi
 
-	if [[ ! -f $OUTGROUP ]]; then
+	if [[ ! -f $ALL_BED ]]; then
 		func_usage
-		echo -e "Error: -O FILE	non-olfactory receptor sequences for outgroup (FASTA) (required) not found.\n"
+		echo -e "Error: -O FILE	reference sequence regions (BED) not found.\n"
 		exit 1
 	fi
 
@@ -344,19 +342,6 @@ biopython
 		hash $depbin 2>/dev/null || { func_usage; echo >&2 "$depbin not found. Please check that it is installed"; exit 1;}
 	done
 
-	OUTBASE=$( basename "$PREFIX" )
-	OUT_BEST_HIT="${PREFIX}_best_hit.gff"
-	OUT_INTACT="${PREFIX}_intact.fa"
-	MAFFT_MAX=200
-	OR_REF_N=$(awk '/>/ { count++ } END { print count }' $OR_REF)
-	ORF_MAX=$(($MAFFT_MAX - $OR_REF_N))
-
-	if ((OR_REF_N > 50)); then
-		func_usage
-		echo -e "Error: -R has more than 50 sequences. Please use less."
-		exit 1
-	fi
-
 	# make temporary directory
 	if [[ -z "$TEMP_DIR" ]]; then
 		TEMP_DIR=$( mktemp -d tmpXXX )
@@ -364,28 +349,35 @@ biopython
 		mkdir -p $TEMP_DIR
 	fi
 
-	python $FASTATOOLS id_list $OR_REF > $TEMP_DIR/rem_id.txt
-	python $FASTATOOLS id_list $OUTGROUP > $TEMP_DIR/out_id.txt
-	REM_ID=$TEMP_DIR/rem_id.txt
-	OUT_ID=$TEMP_DIR/out_id.txt
+	OUTBASE=$( basename "$PREFIX" )
+	OUT_BEST_HIT="${PREFIX}_best_hit.gff"
+	OUT_INTACT="${PREFIX}_intact.fa"
+	OUT_C1="${PREFIX}_intact_classI.gff"
+	OUT_C2="${PREFIX}_intact_classII.gff"
+	ALN_MAX=$(wc -l $ALL_ID | awk '{ print 200 -$1 }')
+
+	awk -v tempdir=$TEMP_DIR '{ print $1 > tempdir "/" $2 "_id.txt" }' $ALL_ID
+	awk -v tempdir=$TEMP_DIR '{ print $1, $2, $3 > tempdir "/" $4 ".bed" }' $ALL_BED
+
+	cat $TEMP_DIR/1_id.txt $TEMP_DIR/2_id.txt |\
+	python $FASTATOOLS extract $ALL_REF /dev/stdin > $TEMP_DIR/or_ref.fasta
+	python $FASTATOOLS extract $ALL_REF $TEMP_DIR/0_id.txt > $TEMP_DIR/out_ref.fasta
+	python $FASTATOOLS extract $ALL_REF $TEMP_DIR/1_id.txt > $TEMP_DIR/1_ref.fasta
+	python $FASTATOOLS extract $ALL_REF $TEMP_DIR/2_id.txt > $TEMP_DIR/2_ref.fasta
+	cat $TEMP_DIR/*_id.txt > $TEMP_DIR/rem_id.text
+	OR_REF=$TEMP_DIR/or_ref.fasta
+	OUTGROUP=$TEMP_DIR/out_ref.fasta
+	REM_ID=$TEMP_DIR/rem_id.text
+	C1_ID=$TEMP_DIR/1_id.txt
+	OUT_ID=$TEMP_DIR/0_id.txt
+	OR_TM=$TEMP_DIR/tm.bed
+
+	rm $TEMP_DIR/2_id.txt
+
 
 	# Get best hits
 	if $VERBOSE; then
-		echo -e "\nGetting best hits..."
-		echo -e "
-cat $HITS |
-awk -v OFS='\t' '{ if((\$9<\$10)) { strand=\"+\" }
-else { strand=\"-\"; tmp=\$10; \$10=\$9; \$9=tmp }
-print \$2,\"TBLASTN\",\"similarity\",\$9,\$10,\$11,strand,\".\",\"qseqid=\"\$1\";qstart=\"\$7\";qend=\"\$8\";pident=\"\$3\";length=\"\$4\";mismatch=\"\$5\";gapopen=\"\$6\";bitscore=\"\$12 }' |
-sort -k7,7 -k1,1 -k4n,4 |
-bedtools cluster -s -i /dev/stdin > $TEMP_DIR/blast_hit_clusters.gff
-
-paste $TEMP_DIR/blast_hit_clusters.gff
-<(cat $TEMP_DIR/blast_hit_clusters.gff | cut -f 9 | cut -f 8 -d ';' | cut -f 2 -d '=') |
-sort -k10n,10 -k6g,6 -k11gr,11 |
-awk '!arr[${10}]++' | cut -f 1-9 > $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp
-mv $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp $OUT_BEST_HIT
-"
+		echo -e "\nGetting best hits...\n"
 	fi
 
 	# Formats alignment as a GFF file
@@ -403,42 +395,43 @@ mv $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp $OUT_BEST_HIT
 	paste $TEMP_DIR/blast_hit_clusters.gff <(cat $TEMP_DIR/blast_hit_clusters.gff | cut -f 9 | cut -f 8 -d ';' | cut -f 2 -d '=') |\
 	sort -k10n,10 -k6g,6 -k11gr,11 |\
 	awk '!arr[$10]++' | cut -f 1-9 | awk '($5-$4+1)/3>=50' > $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp
-	mv $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp $OUT_BEST_HIT
+	mv $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp ${PREFIX}_best_hit.gff
 
 	if [[ "$?" -ne 0 ]]; then
 		echo -e "Error: get best hits returned an error; exit now"
 		exit 1
 	fi
 
-	# criteria 1
 	if $VERBOSE; then
 		wc -l $OUT_BEST_HIT | awk '{ print $1, "hits\n"}'
+	fi
+
+	# criteria 1
+	if $VERBOSE; then
 		echo -e "Criteria 1: discard hits which length is shorter than 250 aa.\n"
-		echo -e "awk '(\$5-\$4+1)/3>=250' ${OUTBASE}_best_hit.gff > $TEMP_DIR/blast_hits_250_aa.gff\n"
 	fi
 
 	awk '($5-$4+1)/3>=250' $OUT_BEST_HIT > $TEMP_DIR/blast_hits_250_aa.gff
 
+# 	# ^ MAYBE PUT THIS IN ALIGN
+#
 	# criteria 2
 	if $VERBOSE; then
 		wc -l $OUT_BEST_HIT | awk '{print $1, "hits remaining\n"}'
-		echo -e "Criteria 2: add flanking sequences and find intact ORF (ATG ~ stop codon)"
-		echo -e "
-python $FINDORF $SUBJECT $TEMP_DIR/blast_hits_250_aa.gff |
-bedtools getfasta -s -fi $SUBJECT -bed /dev/stdin -fo /dev/stdout |
-python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa\n"
 	fi
 
-	# Uses included python script findorf.py to get potential orfs from all 6
-	# reading frames for each blast hit coordinates
-	# Get sequences for those orfs and calls fastatools translate function to
-	# create a protein fasta file of all the orfs
+	if $VERBOSE; then
+		echo -e "Criteria 2: add flanking sequences and find intact ORF (ATG ~ stop codon)\n"
+	fi
 
 	# Creates a file with subject chromosome/scaffold lengths for bedtools
 	samtools faidx $SUBJECT
 	cat $SUBJECT.fai |\
 	cut -f 1,2 > $TEMP_DIR/sub.sizes
 
+	# Uses bedtools to extend each hit 1000 bp in both directions, then uses
+	# findorf.py to get potential orfs from all 3 reading frames on the same
+	# strand. Each potential reading frame is then translated.
 	bedtools slop -i $TEMP_DIR/blast_hits_250_aa.gff -g $TEMP_DIR/sub.sizes -b 1000 |\
 	python $FINDORF -S $SUBJECT -H /dev/stdin |\
 	bedtools getfasta -s -fi $SUBJECT -bed /dev/stdin -fo /dev/stdout |\
@@ -449,17 +442,17 @@ python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa\n"
 		exit 1
 	fi
 
+	if $VERBOSE; then
+		awk '/>/ { count++ } END { print count, "ORFs found\n"}' $TEMP_DIR/open_reading_frame.fa
+	fi
 	# criteria 3
 	if $VERBOSE; then
-		awk '/>/ { count++ } END { print count, "remaining ORFs\n"}' $TEMP_DIR/open_reading_frame.fa
-		echo -e "Criteria 3: multiple alignment and exclude or candidates which have long gaps (>=5) within transmembrane regions."
+		echo -e "Criteria 3: exclude sequences which have long gaps (>=5) in transmembrane regions.\n"
 	fi
 
+	# this divides the open reading frame file into fastas of 200 or less
+	awk -v i=0 -v d=0 "/^>/ && i++%$ALN_MAX==0{s=\"$TEMP_DIR/open_reading_frame_\"++d\".fa\"} {print > s}" ${TEMP_DIR}/open_reading_frame.fa
 
-	# this divides the open reading frame file into fastas of 400 or less
-	awk -v i=0 -v d=0 "/^>/ && i++%$ORF_MAX==0{s=\"$TEMP_DIR/open_reading_frame_\"++d\".fa\"} {print > s}" ${TEMP_DIR}/open_reading_frame.fa
-
-	# Cycles through all of the reading frame fasta files
 	i=0
 	for FASTA in $TEMP_DIR/open_reading_frame_*.fa; do
 		i=$((i+1))
@@ -468,51 +461,40 @@ python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa\n"
 		# Adds the reference OR to the open reading frames
 		# Aligns the sequences with MAFFT
 		# Sends alignment along with OR REF and OR REF TM bed file to tm_gap
-		# Gets back a GFF file with the start and stop of sequences with intact
-		# TM regions.
-		# Sends that to Bedtools to get a fasta from the subject sequence, then
-		# translates the fastas, adds the OR REF, aligns with mafft, and sends
-		# to a sequence alighnment fasta.
+		# Gets back the ids of sequences with gaps
 		echo "
 cat $FASTA $OR_REF |\
 mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin |\
-python $TM_GAP --ref_or $OR_REF --orf_aln /dev/stdin --ref_or_tm $OR_TM  --rem_id $REM_ID|\
-bedtools getfasta -s -fi $SUBJECT -bed /dev/stdin -fo /dev/stdout |\
-python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/excluded_long_gap_${i}.fa
+python $CON_GAP -A /dev/stdin -B $OR_TM -G 4 |\
+python $FASTATOOLS exclude $FASTA /dev/stdin > $TEMP_DIR/excluded_long_gap_${i}.fa
 		"
 		done > $TEMP_DIR/command.txt
 
-	if $VERBOSE; then
-		echo -e "
-For each group of $ORF_MAX ORFs:
-cat $FASTA $OR_REF |
-mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin |
-python $TM_GAP --ref_or $OR_REF --orf_aln /dev/stdin --ref_or_tm $OR_TM  --rem_id $REM_ID|
-bedtools getfasta -s -fi $SUBJECT -bed /dev/stdin -fo /dev/stdout |
-python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/excluded_long_gap_*.fa\n"
-	fi
-
 	cat $TEMP_DIR/command.txt | parallel -j $THREADS
-	rm $TEMP_DIR/open_reading_frame_*.fa
-
-	cat $TEMP_DIR/excluded_long_gap_*.fa > $TEMP_DIR/excluded_long_gap.fa
-	rm $TEMP_DIR/excluded_long_gap_*.fa
-	awk -v i=0 -v d=0 "/^>/ && i++%$ORF_MAX==0{s=\"${TEMP_DIR}/excluded_long_gap_\"++d\"_aln.fa\"} {print > s}" $TEMP_DIR/excluded_long_gap.fa
 
 	if [[ "$?" -ne 0 ]]; then
 		echo "Error: criteria 3, exclude sequences with long gaps in transmembrane regions."
 		exit 1
 	fi
 
+	rm $TEMP_DIR/open_reading_frame_*.fa
+	cat $TEMP_DIR/excluded_long_gap_*.fa > $TEMP_DIR/excluded_long_gap.fa
+	rm $TEMP_DIR/excluded_long_gap_*.fa
+
+	if $VERBOSE; then
+		awk '/>/ { count++ } END { print count, "remaining ORFs\n"}' ${TEMP_DIR}/excluded_long_gap.fa
+	fi
+
 	# criteria 4
 	if $VERBOSE; then
-		awk '/>/ { count++ } END { print count, "remaining ORFs\n"}' $TEMP_DIR/excluded_long_gap.fa
-		echo -e "Criteria 4: assigning a proper initiation codon"
+		echo -e "Criteria 4: assigning a proper initiation codon\n"
 	fi
+
+	awk -v i=0 -v d=0 "/^>/ && i++%$ALN_MAX==0{s=\"$TEMP_DIR/excluded_long_gap_\"++d\".fa\"} {print > s}" ${TEMP_DIR}/excluded_long_gap.fa
 
 	#Cycles through all the fasta files with intact TM regions
 	i=0
-	for FASTA in ${TEMP_DIR}/excluded_long_gap_*_aln.fa; do
+	for FASTA in ${TEMP_DIR}/excluded_long_gap_*.fa; do
 		i=$((i+1))
 
 		#Sends REFERENCE, OR_REF, OR_TM and FASTA to start codon
@@ -521,98 +503,137 @@ cat $FASTA $OR_REF |\
 mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin |\
 python $START_CODON --orf_aln /dev/stdin --ref_or_tm $OR_TM --rem_id $REM_ID|\
 bedtools getfasta -s -fi $SUBJECT -bed /dev/stdin -fo /dev/stdout |\
-python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}.fa.tmp"
+python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}.fa"
 	done > $TEMP_DIR/command.txt
 
-	if $VERBOSE; then
-		echo -e "
-For each group of $ORF_MAX ORFs:
-cat $FASTA $OR_REF |
-mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin |
-python $START_CODON --orf_aln /dev/stdin --ref_or_tm $OR_TM --rem_id $REM_ID|
-bedtools getfasta -s -fi $SUBJECT -bed /dev/stdin -fo /dev/stdout |
-python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}.fa.tmp
-"
-	fi
-
 	cat $TEMP_DIR/command.txt | parallel -j $THREADS
-	rm $TEMP_DIR/excluded_long_gap_*_aln.fa
-
-	cat $TEMP_DIR/assigned_start_codon_*.fa.tmp > $TEMP_DIR/assigned_start_codon.fa
-	rm $TEMP_DIR/assigned_start_codon_*.fa.tmp
 
 	if [[ "$?" -ne 0 ]]; then
 		echo "Error: criteria 4, assigning a proper start codon."
 		exit 1
 	fi
 
-	# phylogenetic tree
-	#Split into 200 sequences
-	awk "/^>/ && n++%200==0{s=\"$TEMP_DIR/assigned_start_codon_aa_\"++d\".fa\"} {print > s}" $TEMP_DIR/assigned_start_codon.fa
-	# remove the description of the fasta sequences from heading
-	bioawk -c fastx '{print ">"$1"\n"$2}' $OUTGROUP > "${TEMP_DIR}/outgroup.fa"
-	i=0
-	for FASTA in ${TEMP_DIR}/assigned_start_codon_aa_*.fa; do
-		i=$((i+1))
-		echo "
-cat $FASTA $TEMP_DIR/outgroup.fa |\
-mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}_aln.fa"
-	done > $TEMP_DIR/command.txt
+	rm $TEMP_DIR/excluded_long_gap_*.fa
+
+	cat $TEMP_DIR/assigned_start_codon_*.fa > $TEMP_DIR/assigned_start_codon.fa
+	rm $TEMP_DIR/assigned_start_codon_*.fa
+
 	if $VERBOSE; then
-		echo "
-cat $FASTA $TEMP_DIR/outgroup.fa |
-mafft --maxiterate 1000 --quiet --genafpair --thread $THREADS /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}_aln.fa"
+		awk '/>/ { count++ } END { print count, "remaining ORFs\n"}' $TEMP_DIR/assigned_start_codon.fa
 	fi
 
-	cat $TEMP_DIR/command.txt | parallel -j $THREADS
-	rm $TEMP_DIR/assigned_start_codon_aa_*.fa
-
-	if [[ "$?" -ne 0 ]]; then
-		echo "Error: criteria 4, multiple sequence alignment for construction of phylogenetic tree."
-		exit 1
+	if $VERBOSE; then
+		echo -e "Criteria 5: remove sequences that form clades with outgroup\n"
 	fi
 
-	# megacc
-	#Creates a text file with outgroup id = outgroup
+	awk "/^>/ && n++%$ALN_MAX==0{s=\"$TEMP_DIR/assigned_start_codon_\"++d\".fa\"} {print > s}" $TEMP_DIR/assigned_start_codon.fa
+
 	awk '{print $0"=outgroup"}' $OUT_ID > "${TEMP_DIR}/outgroup.txt"
 	i=0
-
-	for FASTA in ${TEMP_DIR}/assigned_start_codon_*_aln.fa; do
+	for FASTA in ${TEMP_DIR}/assigned_start_codon_*.fa; do
 		i=$((i+1))
 		echo "
-megacc -a $MAO -d $FASTA -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}"
-	done > ${TEMP_DIR}/command.txt
+cat $FASTA $OUTGROUP |\
+mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin > $TEMP_DIR/phylo_${i}_aln.fa
+megacc -a $MAO -d $TEMP_DIR/phylo_${i}_aln.fa -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}.nwk
+python $PHYLO $TEMP_DIR/phylo_tree_${i}.nwk $OUT_ID > ${TEMP_DIR}/non_or_within_outgroup_ids_${i}.txt
+				"
+	done > $TEMP_DIR/command.txt
 
-	if $VERBOSE; then
-		echo "
-megacc -a $MAO -d $FASTA -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}"
+	cat $TEMP_DIR/command.txt | parallel -j $THREADS
+
+	if [[ "$?" -ne 0 ]]; then
+		echo "Error: criteria 5, remove sequences that form clades with outgroup"
+		exit 1
 	fi
-
-	cat ${TEMP_DIR}/command.txt | parallel -j $THREADS
-
-	# discard non-OR genes that form a clade with the genes of outgroup
-	bioawk -c fastx '{print $1}' $OUTGROUP | cut -f 2 -d '>' > ${TEMP_DIR}/outgroup_ids.txt
-	i=0
-	for NWK in ${TEMP_DIR}/phylo_tree_*.nwk; do
-		i=$((i+1))
-		echo "
-python $PHYLO $NWK '${TEMP_DIR}/outgroup_ids.txt' > '${TEMP_DIR}/non_or_within_outgroup_ids_${i}.txt'"
-	done > ${TEMP_DIR}/command.txt
-
-	cat ${TEMP_DIR}/command.txt | parallel -j $THREADS
 
 	cat ${TEMP_DIR}/non_or_within_outgroup_ids_*.txt > ${TEMP_DIR}/non_or_within_outgroup_ids.txt
 	rm ${TEMP_DIR}/non_or_within_outgroup_ids_*.txt
+	rm ${TEMP_DIR}/assigned_start_codon_*.fa
 
-	python $FASTATOOLS exclude ${TEMP_DIR}/assigned_start_codon.fa <( cat ${TEMP_DIR}/non_or_within_outgroup_ids.txt ) > $OUT_INTACT
+	python $FASTATOOLS exclude ${TEMP_DIR}/assigned_start_codon.fa ${TEMP_DIR}/non_or_within_outgroup_ids.txt > ${TEMP_DIR}/outgroup_removed.fa
 
-	# rm -f $TEMP_DIR/phylo_tree_*
+ 	rm -f ${TEMP_DIR}/phylo_*
+
+	if $VERBOSE; then
+		awk '/>/ { count++ } END { print count, "remaining ORFs\n"}' ${TEMP_DIR}/outgroup_removed.fa
+	fi
+
+
+	if $VERBOSE; then
+		echo -e "Criteria 6: divide into class I and class II ORs"
+	fi
+
+	awk "/^>/ && n++%$ALN_MAX==0{s=\"${TEMP_DIR}/outgroup_removed_\"++d\".fa\"} {print > s}" ${TEMP_DIR}/outgroup_removed.fa
+
+	i=0
+	for FASTA in ${TEMP_DIR}/outgroup_removed_aa_*.fa; do
+		i=$((i+1))
+		echo "
+	cat $FASTA $ALL_REF |\
+	mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin > $TEMP_DIR/phylo_${i}_aln.fa
+	megacc -a $MAO -d $TEMP_DIR/phylo_${i}_aln.fa -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}.nwk
+	python $PHYLO $TEMP_DIR/phylo_tree_${i}.nwk $OUT_ID -C $C1_ID > '${TEMP_DIR}/new_c1_ids_${i}.txt'"
+	done > $TEMP_DIR/command.txt
+
+	cat $TEMP_DIR/command.txt | parallel -j $THREADS
 
 	if [[ "$?" -ne 0 ]]; then
-		echo "Error: criteria 4, construction of phylogenetic tree."
+		echo "Error: criteria 6, divide into class I and class II ORs"
 		exit 1
 	fi
 
+	rm $TEMP_DIR/outgroup_removed_*.fa
+	cat ${TEMP_DIR}/new_c1_ids_*.txt > ${TEMP_DIR}/new_c1_ids.txt
+	rm ${TEMP_DIR}/new_c1_ids_*.txt
+
+	python $FASTATOOLS extract ${TEMP_DIR}/outgroup_removed.fa ${TEMP_DIR}/new_c1_ids.txt > ${TEMP_DIR}/potential_class_1.fa
+	python $FASTATOOLS exclude ${TEMP_DIR}/outgroup_removed.fa ${TEMP_DIR}/new_c1_ids.txt > ${TEMP_DIR}/potential_class_2.fa
+
+	rm -f $TEMP_DIR/phylo_tree_*
+
+
+	if $VERBOSE; then
+	awk '/>/ { count++ } END { print count, "potential class I ORs \n"}' ${TEMP_DIR}/potential_class_1.fa
+	awk '/>/ { count++ } END { print count, "potential class II ORs \n"}' ${TEMP_DIR}/potential_class_2.fa
+	fi
+
+	if $VERBOSE; then
+	echo -e "Criteria 7: Remove sequences with gaps in conserved areas\n"
+	fi
+
+
+	for C in 1 2; do
+		if [[ -s ${TEMP_DIR}/potential_class_${C}.fa ]]; then
+
+			awk "/^>/ && n++%$ALN_MAX==0{s=\"${TEMP_DIR}/potential_class_${C}_\"++d\".fa\"} {print > s}" ${TEMP_DIR}/potential_class_${C}.fa
+
+			i=0
+			for FASTA in ${TEMP_DIR}/potential_class_${C}_*.fa; do
+				i=$((i+1))
+				echo "
+			cat $FASTA $TEMP_DIR/${C}_ref.fasta |\
+			mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin |\
+			python $CON_GAP -A /dev/stdin -B ${TEMP_DIR}/${C}.bed -G 2 -c > ${TEMP_DIR}/too_many_gaps_${C}_${i}.txt
+			"
+			done > $TEMP_DIR/command.txt
+
+			cat ${TEMP_DIR}/command.txt | parallel -j $THREADS
+
+			cat ${TEMP_DIR}/too_many_gaps_${C}_*.txt > ${TEMP_DIR}/too_many_gaps_${C}.txt
+			python $FASTATOOLS exclude ${TEMP_DIR}/potential_class_${C}.fa ${TEMP_DIR}/too_many_gaps_${C}.txt > ${TEMP_DIR}/intact_${C}.fa
+
+		fi
+
+		if [[ -s ${TEMP_DIR}/intact_${C}.fa ]]; then
+			awk -v c=$C '/>/ { count++ } END { print count, "intact class", c, "ORs found\n"}' ${TEMP_DIR}/intact_${C}.fa
+		fi
+
+	done
+
+	cat ${TEMP_DIR}/intact_*.fa > $OUT_INTACT
+	rm ${TEMP_DIR}/potential_class_*.fa
+	rm ${TEMP_DIR}/too_many_gaps_*.txt
 
 	if ! $KEEP ; then
 		rm -r $TEMP_DIR
