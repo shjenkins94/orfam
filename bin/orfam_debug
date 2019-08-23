@@ -42,7 +42,6 @@ function source_binaries() {
 	for PYPACK in $FASTATOOLS $FINDORF $CON_GAP $START_CODON $PHYLO $PSEUDOGENE
 	do
 		if [[ ! -f $PYPACK ]]; then
-			func_usage
 			echo -e "Error: $PYPACK executable not found. Please make sure it is in $BIN"
 			exit 1
 		fi
@@ -97,9 +96,9 @@ TBLASTN
 		O)
 			OUTPUT="$OPTARG"
 			;;
-
 		T)
 			TEMP_DIR="$OPTARG"
+			KEEP=true
 			;;
 		t)
 			THREADS="$OPTARG"
@@ -125,8 +124,7 @@ TBLASTN
 	done
 
 	# check the relevant binaries
-	#source_binaries $CONFIG
-	for DEPBIN in "bioawk" "makeblastdb" "tblastn"
+	for DEPBIN in "bioawk" "makeblastdb" "tblastn" "bedtools"
 	do
 		hash $DEPBIN 2>/dev/null || { echo >&2 "$DEPBIN not found. Please check that it is installed"; align_usage; exit 1;}
 	done
@@ -134,17 +132,17 @@ TBLASTN
 	# check that the required files exist
 	if [[ ! -f $SUBJECT ]]; then
 		align_usage
-		echo -e "Error: subject genome fasta file SUBJECT not found.\n"
+		echo -e "\nError: subject genome fasta file SUBJECT not found.\n"
 		exit 1
 	fi
 	if [[ ! -f $QUERY ]]; then
 		align_usage
-		echo -e "Error: olfactory receptor fasta file QUERY not found.\n"
+		echo -e "\nError: olfactory receptor fasta file QUERY not found.\n"
 		exit 1
 	fi
 
 	if [[ -z $OUTPUT ]]; then
-		OUTPUT="$(basename $QUERY).txt"
+		OUTPUT="$(basename $QUERY).gff"
 	fi
     OUTBASE=$(basename $OUTPUT)
 
@@ -155,15 +153,9 @@ TBLASTN
 		mkdir -p $TEMP_DIR
 	fi
 
-
-	echo "Aligning..."
-  if $VERBOSE ; then
-   	echo "
-bioawk -c fastx 'length(\$2) >= 250 { print \">\"\$1\"\n\"\$2}' $QUERY > $TEMP_DIR/query_length_ge_250aa.fa
-makeblastdb -dbtype nucl -in $SUBJECT -out $TEMP_DIR/$(basename $SUBJECT) -title \"ref genome database\" -parse_seqids
-tblastn -db $TEMP_DIR/$(basename $SUBJECT) -query $TEMP_DIR/query_length_ge_250aa.fa -out $TEMP_DIR/${OUTBASE}.tmp -evalue $EVALUE -outfmt 6 -num_threads $THREADS
-mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT"
-  fi
+	if $VERBOSE; then
+	echo -e "Aligning...\n"
+	fi
 
 	#Filters out query sequences with lengths of less than 250
 	#Creates a blast database for SUBJECT
@@ -171,10 +163,51 @@ mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT"
 	#Moves the alignment to OUTPUT
 	bioawk -c fastx 'length($2) >= 250 { print ">"$1"\n"$2}' $QUERY > $TEMP_DIR/query_length_ge_250aa.fa
   makeblastdb -dbtype nucl -in $SUBJECT -out $TEMP_DIR/"$(basename $SUBJECT)" -title "ref genome database" -parse_seqids
-	if [[ "$?" -ne 0 ]]; then echo "Error: makeblastdb returned an error;exit now"; exit 1; fi
-  tblastn -db $TEMP_DIR/"$(basename $SUBJECT)" -query $TEMP_DIR/query_length_ge_250aa.fa -out $TEMP_DIR/${OUTBASE}.tmp -evalue $EVALUE -outfmt 6 -num_threads $THREADS
-	if [[ "$?" -ne 0 ]]; then echo "Error: tblastn returned an error;exit now"; exit 1; fi
-	mv $TEMP_DIR/${OUTBASE}.tmp $OUTPUT
+	if [[ "$?" -ne 0 ]]; then echo "Error: makeblastdb returned an error; exit now"; exit 1; fi
+
+	tblastn -db $TEMP_DIR/"$(basename $SUBJECT)" -query $TEMP_DIR/query_length_ge_250aa.fa -out $TEMP_DIR/${OUTBASE}.tmp -evalue $EVALUE -outfmt 6 -num_threads $THREADS
+	if [[ "$?" -ne 0 ]]; then echo "Error: tblastn returned an error; exit now"; exit 1; fi
+
+	# Formats alignment as a GFF file
+	# Sorts by strand, subject id and subject start position
+	# Then uses bedtools to create clusters of hits with overlapping bases
+	# The cluster for each hit is added on at the end in a new column
+	cat $TEMP_DIR/${OUTBASE}.tmp |\
+	awk -v OFS='\t' '{ if(($9<$10)) { strand="+" } else { strand="-"; tmp=$10; $10=$9; $9=tmp } print $2,"TBLASTN","similarity",$9,$10,$11,strand,".","qseqid="$1";qstart="$7";qend="$8";pident="$3";length="$4";mismatch="$5";gapopen="$6";bitscore="$12 }' |\
+	sort -k7,7 -k1,1 -k4n,4 |\
+	bedtools cluster -s -i /dev/stdin > $TEMP_DIR/blast_hit_clusters.gff
+	if [[ "$?" -ne 0 ]]; then echo "Error: clustering hits returned an error; exit now"; exit 1; fi
+
+	# Get best hits
+	if $VERBOSE; then
+		echo -e "Getting best hits...\n"
+	fi
+
+	# Adds another column with the bit score for each hit
+	# Sorts by cluster, then e-score, then bit score
+	# Takes the top hit for each cluster, discards hits with lengths of less than 50
+	paste $TEMP_DIR/blast_hit_clusters.gff <(cat $TEMP_DIR/blast_hit_clusters.gff | cut -f 9 | cut -f 8 -d ';' | cut -f 2 -d '=') |\
+	sort -k10n,10 -k6g,6 -k11gr,11 |\
+	awk '!arr[$10]++' | cut -f 1-9 | awk '($5-$4+1)/3>=50' > $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp
+	if [[ "$?" -ne 0 ]]; then echo -e "Error: get best hits returned an error; exit now"; exit 1; fi
+
+	if $VERBOSE; then
+		wc -l $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp | awk '{ print $1, "hits\n"}'
+	fi
+
+	# criteria 1
+	if $VERBOSE; then
+		echo -e "Criteria 1: discarding hits with less than 250 aa \n"
+	fi
+
+	awk '($5-$4+1)/3>=250' $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp > $OUTPUT
+
+# 	# ^ MAYBE PUT THIS IN ALIGN
+#
+	# criteria 2
+	if $VERBOSE; then
+		wc -l $OUTPUT | awk '{ print $1, "hits\n"}'
+	fi
 
 	# clean up
 	if ! $KEEP ; then
@@ -194,8 +227,8 @@ function func() {
 usage:	orfam func [options]
 
 options:
--S FILE	subject genome (FASTA)
--H FILE orfam align output (tabular) (required)
+-S FILE	subject genome (FASTA) (required)
+-H FILE orfam align output (GFF) (required)
 -R FILE	reference sequences (FASTA) (required)
 -I FILE table of reference sequence ids and which group they belong to (tabular) (required)
 -b FILE	bed files for reference olfactory receptors (BED) (required)
@@ -292,42 +325,42 @@ biopython
 # Check for required inputs
 	if [[ ! -f $SUBJECT ]]; then
 		func_usage
-		echo -e "Error: -S FILE	subject genome (FASTA) not found.\n"
+		echo -e "\nError: -S FILE	subject genome (FASTA) not found.\n"
 		exit 1
 	fi
 	if [[ ! -f $HITS ]]; then
 		func_usage
-		echo -e "Error: -A orfam align output (tabular) not found.\n"
+		echo -e "\nError: -A orfam align output (tabular) not found.\n"
 		exit 1
 	fi
 
 	if [[ ! -f $ALL_REF ]]; then
 		func_usage
-		echo -e "Error: -R FILE	reference sequences (FASTA) not found.\n"
+		echo -e "\nError: -R FILE	reference sequences (FASTA) not found.\n"
 		exit 1
 	fi
 
 	if [[ ! -f $ALL_ID ]]; then
 		func_usage
-		echo -e "Error: -b FILE	reference sequence ids (tabular) not found.\n"
+		echo -e "\nError: -b FILE	reference sequence ids (tabular) not found.\n"
 		exit 1
 	fi
 
 	if [[ ! -f $ALL_BED ]]; then
 		func_usage
-		echo -e "Error: -O FILE	reference sequence regions (BED) not found.\n"
+		echo -e "\nError: -O FILE	reference sequence regions (BED) not found.\n"
 		exit 1
 	fi
 
 	if [[ ! -f $MAO ]]; then
 		func_usage
-		echo -e "Error: -M FILE	settings for construction of phylogenetic tree (MAO) not found.\n"
+		echo -e "\nError: -M FILE	settings for construction of phylogenetic tree (MAO) not found.\n"
 		exit 1
 	fi
 
 	if [[ -z $PREFIX ]]; then
 		func_usage
-		echo -e "Error: -P STR	path to output file ending with a prefix for labeling output files not found.\n"
+		echo -e "\nError: -P STR	path to output file ending with a prefix for labeling output files not found.\n"
 		exit 1
 	fi
 
@@ -372,53 +405,6 @@ biopython
 	OUT_ID=$TEMP_DIR/0_id.txt
 	OR_TM=$TEMP_DIR/tm.bed
 
-	rm $TEMP_DIR/2_id.txt
-
-
-	# Get best hits
-	if $VERBOSE; then
-		echo -e "\nGetting best hits...\n"
-	fi
-
-	# Formats alignment as a GFF file
-	# Sorts by strand, subject id and subject start position
-	# Then uses bedtools to create clusters of hits with overlapping bases
-	# The cluster for each hit is added on at the end in a new column
-	cat $HITS |\
-	awk -v OFS='\t' '{ if(($9<$10)) { strand="+" } else { strand="-"; tmp=$10; $10=$9; $9=tmp } print $2,"TBLASTN","similarity",$9,$10,$11,strand,".","qseqid="$1";qstart="$7";qend="$8";pident="$3";length="$4";mismatch="$5";gapopen="$6";bitscore="$12 }' |\
-	sort -k7,7 -k1,1 -k4n,4 |\
-	bedtools cluster -s -i /dev/stdin > $TEMP_DIR/blast_hit_clusters.gff
-
-	# Adds another column with the bit score for each hit
-	# Sorts by cluster, then e-score, then bit score
-	# Takes the top hit for each cluster, discards hits with lengths of less than 50
-	paste $TEMP_DIR/blast_hit_clusters.gff <(cat $TEMP_DIR/blast_hit_clusters.gff | cut -f 9 | cut -f 8 -d ';' | cut -f 2 -d '=') |\
-	sort -k10n,10 -k6g,6 -k11gr,11 |\
-	awk '!arr[$10]++' | cut -f 1-9 | awk '($5-$4+1)/3>=50' > $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp
-	mv $TEMP_DIR/${OUTBASE}_best_hit.gff.tmp ${PREFIX}_best_hit.gff
-
-	if [[ "$?" -ne 0 ]]; then
-		echo -e "Error: get best hits returned an error; exit now"
-		exit 1
-	fi
-
-	if $VERBOSE; then
-		wc -l $OUT_BEST_HIT | awk '{ print $1, "hits\n"}'
-	fi
-
-	# criteria 1
-	if $VERBOSE; then
-		echo -e "Criteria 1: discard hits which length is shorter than 250 aa.\n"
-	fi
-
-	awk '($5-$4+1)/3>=250' $OUT_BEST_HIT > $TEMP_DIR/blast_hits_250_aa.gff
-
-# 	# ^ MAYBE PUT THIS IN ALIGN
-#
-	# criteria 2
-	if $VERBOSE; then
-		wc -l $OUT_BEST_HIT | awk '{print $1, "hits remaining\n"}'
-	fi
 
 	if $VERBOSE; then
 		echo -e "Criteria 2: add flanking sequences and find intact ORF (ATG ~ stop codon)\n"
@@ -432,7 +418,7 @@ biopython
 	# Uses bedtools to extend each hit 1000 bp in both directions, then uses
 	# findorf.py to get potential orfs from all 3 reading frames on the same
 	# strand. Each potential reading frame is then translated.
-	bedtools slop -i $TEMP_DIR/blast_hits_250_aa.gff -g $TEMP_DIR/sub.sizes -b 1000 |\
+	bedtools slop -i $HITS -g $TEMP_DIR/sub.sizes -b 1000 |\
 	python $FINDORF -S $SUBJECT -H /dev/stdin |\
 	bedtools getfasta -s -fi $SUBJECT -bed /dev/stdin -fo /dev/stdout |\
 	python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/open_reading_frame.fa
@@ -529,17 +515,33 @@ python $FASTATOOLS translate /dev/stdin > $TEMP_DIR/assigned_start_codon_${i}.fa
 	awk "/^>/ && n++%$ALN_MAX==0{s=\"$TEMP_DIR/assigned_start_codon_\"++d\".fa\"} {print > s}" $TEMP_DIR/assigned_start_codon.fa
 
 	awk '{print $0"=outgroup"}' $OUT_ID > "${TEMP_DIR}/outgroup.txt"
+
 	i=0
 	for FASTA in ${TEMP_DIR}/assigned_start_codon_*.fa; do
 		i=$((i+1))
 		echo "
 cat $FASTA $OUTGROUP |\
 mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin > $TEMP_DIR/phylo_${i}_aln.fa
+				"
+	done > $TEMP_DIR/command.txt
+	cat $TEMP_DIR/command.txt | parallel -j $THREADS
+
+	i=0
+	for FASTA in ${TEMP_DIR}/assigned_start_codon_*.fa; do
+		i=$((i+1))
+		echo "
 megacc -a $MAO -d $TEMP_DIR/phylo_${i}_aln.fa -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}.nwk
+				"
+	done > $TEMP_DIR/command.txt
+	cat $TEMP_DIR/command.txt | parallel -j $THREADS
+
+	i=0
+	for FASTA in ${TEMP_DIR}/assigned_start_codon_*.fa; do
+		i=$((i+1))
+		echo "
 python $PHYLO $TEMP_DIR/phylo_tree_${i}.nwk $OUT_ID > ${TEMP_DIR}/non_or_within_outgroup_ids_${i}.txt
 				"
 	done > $TEMP_DIR/command.txt
-
 	cat $TEMP_DIR/command.txt | parallel -j $THREADS
 
 	if [[ "$?" -ne 0 ]]; then
@@ -571,12 +573,29 @@ python $PHYLO $TEMP_DIR/phylo_tree_${i}.nwk $OUT_ID > ${TEMP_DIR}/non_or_within_
 		i=$((i+1))
 		echo "
 	cat $FASTA $ALL_REF |\
-	mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin > $TEMP_DIR/phylo_${i}_aln.fa
-	megacc -a $MAO -d $TEMP_DIR/phylo_${i}_aln.fa -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}.nwk
+	mafft --maxiterate 1000 --genafpair --quiet --thread $THREADS /dev/stdin > $TEMP_DIR/phylo_${i}_aln.fa"
+	done > $TEMP_DIR/command.txt
+
+	cat $TEMP_DIR/command.txt | parallel -j $THREADS
+
+	i=0
+	for FASTA in ${TEMP_DIR}/outgroup_removed_aa_*.fa; do
+		i=$((i+1))
+		echo "
+	megacc -a $MAO -d $TEMP_DIR/phylo_${i}_aln.fa -g ${TEMP_DIR}/outgroup.txt -o $TEMP_DIR/phylo_tree_${i}.nwk"
+	done > $TEMP_DIR/command.txt
+
+	cat $TEMP_DIR/command.txt | parallel -j $THREADS
+
+	i=0
+	for FASTA in ${TEMP_DIR}/outgroup_removed_aa_*.fa; do
+		i=$((i+1))
+		echo "
 	python $PHYLO $TEMP_DIR/phylo_tree_${i}.nwk $OUT_ID -C $C1_ID > '${TEMP_DIR}/new_c1_ids_${i}.txt'"
 	done > $TEMP_DIR/command.txt
 
 	cat $TEMP_DIR/command.txt | parallel -j $THREADS
+
 
 	if [[ "$?" -ne 0 ]]; then
 		echo "Error: criteria 6, divide into class I and class II ORs"
@@ -644,136 +663,138 @@ python $PHYLO $TEMP_DIR/phylo_tree_${i}.nwk $OUT_ID > ${TEMP_DIR}/non_or_within_
 	exit 0
 }
 
-#identify pseudo genes
-# function pseudo(){
-# 	function pseudo_usage(){
-# 		echo "
-# usage:	orfam pseudo [options]
-#
-# options:
-# 	-s FILE subject genome (fasta) (required)
-# 	-q FILE query olfactory receptor proteins (fasta) (required)
-# 	-b FILE best hits (gff) (required)
-# 	-i FILE intact olfactory receptor (fasta) (required)
-# 	-o STR 	output prefix
-# 	-T DIR 	temp directory [./tmpXXXXXXXX]
-# 	-k 		keep temporary files
-# 	-K FILE path to orfam.config file (default: same directory as orfam)
-# 	-v 		verbose
-# 	-h 		show this message"
-# 	}
-#
-# 	# check options passed in
-# 	if [[ -z "$2" ]]; then
-# 		pseudo_usage
-# 		exit 1
-# 	fi
-#
-# 	# set defaults
-# 	ORFAM_DIR=$(dirname $0)
-# 	CONFIG=$ORFAM_DIR/orfam.config
-# 	SUBJECT=""
-# 	QUERY=""
-# 	BEST_HITS=""
-# 	INTACT_GENE=""
-# 	OUTPUT=""
-# 	TEMP_DIR=""
-# 	KEEP=0
-# 	VERBOSE=0
-#
-# 	while getopts "hq:s:R:b:i:o:T:kK:v" OPTION; do
-# 		case "$OPTION" in
-# 			h)
-# 				pseudo_usage
-# 				exit 1
-# 				;;
-# 			s)
-# 				SUBJECT="$OPTARG"
-# 				;;
-# 			q)
-# 				QUERY="$OPTARG"
-# 				;;
-# 			b)
-# 				BEST_HITS="$OPTARG"
-# 				;;
-# 			i)
-# 				INTACT_GENE="$OPTARG"
-# 				;;
-# 			o)
-# 				OUTPUT="$OPTARG"
-# 				;;
-# 			T)
-# 				TEMP_DIR="$OPTARG"
-# 				;;
-# 			K)
-# 				CONFIG="$OPTARG"
-# 				;;
-# 			v)
-# 				VERBOSE=1
-# 				;;
-# 			k)
-# 				KEEP=1
-# 				;;
-# 		esac
-# 	done
-#
-# 	# check the relevant binaries
-# 	source_binaries $CONFIG
-#
-# 	# check python modules
-# 	check_python_modules $PYTHON
-#
-# 	if [[ ! -f $EXONERATE ]]; then
-# 		pseudo_usage
-# 		echo -e "Error: exonerate executable not found. Please set path in $ORFAM_DIR/orfam.config file."
-# 		exit 1
-# 	fi
-# 	if [[ ! -f $PSEUDOGENE ]]; then
-# 		pseudo_usage
-# 		echo -e "Error: pseudogene.py executable not found. Please set path in $ORFAM_DIR/orfam.config file."
-# 		exit 1
-# 	fi
-#
-# 	# check that the required file exit
-# 	if [[ ! -f $SUBJECT ]]; then
-# 		pseudo_usage
-# 		echo -e "Error: subject genome file $SUBJECT not found.\n"
-# 		exit 1
-# 	fi
-#
-# 	if [[ ! -f $QUERY ]]; then
-# 		pseudo_usage
-# 		echo -e "Error: query proteins file $QUERY not found.\n"
-# 		exit 1
-# 	fi
-#
-# 	if [[ ! -f $BEST_HITS ]]; then
-# 		pseudo_usage
-# 		echo -e "Error: best hits file $BEST_HITS not found.\n"
-# 		exit 1
-# 	fi
-#
-# 	if [[ ! -f $INTACT_GENE ]]; then
-# 		pseudo_usage
-# 		echo -e "Error: intact gene file $INTACT_GENE not found.\n"
-# 		exit 1
-# 	fi
-#
-# 	#make temporary directory
-# 	if [[ -z "$TEMP_DIR" ]]; then
-# 		TEMP_DIR=$( mktemp -d tmpXXXXXXXX )
-# 	else
-# 		mkdir -p $TEMP_DIR
-# 	fi
-#
-# 	if [[ $VERBOSE -eq 1 ]]; then
-# 		echo -e "
-# 		$PYTHON $PSEUDOGENE -s $SUBJECT -q $QUERY -b $BEST_HITS -i $INTACT_GENE -T $TEMP_DIR
-# 		"
-# 	fi
-#
-# 	$PYTHON $PSEUDOGENE -s $SUBJECT -q $QUERY -b $BEST_HITS -i $INTACT_GENE -o $OUTPUT -T $TEMP_DIR
-# }
+# identify pseudo genes
+function pseudo(){
+	function pseudo_usage(){
+		echo "
+usage:	orfam pseudo [options]
+
+options:
+-S FILE	subject genome (FASTA) (required)
+-Q FILE	known olfactory receptor proteins (FASTA) (required)
+-H FILE orfam align output (GFF) (required)
+-i FILE intact olfactory receptor (fasta) (required)
+-P STR	path to output file ending with a prefix for labeling output files (required)
+-B DIR	location of orfam bin file [same directory as program]
+-T DIR	temp directory [/tmpXXX]
+-k	keep temporary directory
+-v	verbose
+-h	show this message"
+	}
+
+	# check options passed in
+	if [[ -z "$2" ]]; then
+		pseudo_usage
+		exit 1
+	fi
+
+	# set defaults
+	SUBJECT=""
+	QUERY=""
+	HITS=""
+	INTACT=""
+	PREFIX=""
+	BIN=$(dirname $0)
+	TEMP_DIR=""
+	PREFIX=""
+	KEEP=false
+	VERBOSE=false
+
+	while getopts ":S:Q:H:i:P:B:T:kvh" OPTION; do
+		case "$OPTION" in
+			S)
+				SUBJECT="$OPTARG"
+				;;
+			Q)
+				QUERY="$OPTARG"
+				;;
+			H)
+				HITS="$OPTARG"
+				;;
+			i)
+				INTACT="$OPTARG"
+				;;
+			P)
+				PREFIX="$OPTARG"
+				;;
+			B)
+				BIN="$OPTARG"
+				;;
+			T)
+				TEMP_DIR="$OPTARG"
+				KEEP=true
+				;;
+			v)
+				VERBOSE=true
+				;;
+			k)
+				KEEP=true
+				;;
+			h)
+				pseudo_usage
+				exit 1
+				;;
+			?)
+				pseudo_usage
+				exit 1
+				;;
+		esac
+	done
+
+
+
+	# check that the required file exit
+	if [[ ! -f $SUBJECT ]]; then
+		pseudo_usage
+		echo -e "\nrror: subject genome file $SUBJECT not found.\n"
+		exit 1
+	fi
+
+	if [[ ! -f $QUERY ]]; then
+		pseudo_usage
+		echo -e "\nError: query proteins file $QUERY not found.\n"
+		exit 1
+	fi
+
+	if [[ ! -f $HITS ]]; then
+		pseudo_usage
+		echo -e "\nError: best hits file $HITS not found.\n"
+		exit 1
+	fi
+
+	if [[ ! -f $INTACT ]]; then
+		pseudo_usage
+		echo -e "\nError: intact gene file $INTACT not found.\n"
+		exit 1
+	fi
+
+	if [[ -z $PREFIX ]]; then
+		pseudo_usage
+		echo -e "\nError: path to output file ending with a prefix for labeling output files not found.\n"
+		exit 1
+	fi
+
+	# check the relevant binaries
+	source_binaries $BIN
+
+	python -c "import Bio" 2>/dev/null ||\
+	{ func_usage; echo "Bio module not found. Please check that it is installed";  exit 1;}
+
+	#make temporary directory
+	if [[ -z "$TEMP_DIR" ]]; then
+		TEMP_DIR=$( mktemp -d tmpXXX )
+	else
+		mkdir -p $TEMP_DIR
+	fi
+
+	if $VERBOSE; then
+		echo -e "
+		$PYTHON $PSEUDOGENE -s $SUBJECT -q $QUERY -b $HITS -i $INTACT -T $TEMP_DIR
+		"
+	fi
+
+	python $PSEUDOGENE -s $SUBJECT -q $QUERY -b $HITS -i $INTACT -o $PREFIX -T $TEMP_DIR
+}
 
 # show usage when there are no arguments.
 if [[ -z "$1" ]]; then
